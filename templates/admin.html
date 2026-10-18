@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% block wrapclass %}wide{% endblock %}
+{% block content %}
+<h1>لوحة التحكم</h1>
+<div class="card setup">
+  <h2>حالة الإعداد</h2>
+  <ul>
+    <li>{{ '✓' if setup.engines else '✗' }} المحركات المفعّلة:
+      {% for n, m in setup.engines %}<b>{{ n }}</b> <small dir="ltr">({{ m }})</small>{{ '، ' if not loop.last }}{% else %}<span class="err">لا يوجد. أضف GEMINI_API_KEY على الأقل</span>{% endfor %}</li>
+    <li>{{ '✓' if setup.mail_ok else '✗' }} الإيميل: {{ 'Brevo' if setup.mail == 'brevo' else 'SMTP' }}
+      {% if not setup.mail_ok %}<span class="err">(الإعدادات ناقصة)</span>{% endif %}</li>
+    <li>{{ '✓' if setup.admin_email else '✗' }} إيميل المدير: <span dir="ltr">{{ setup.admin_email or '—' }}</span></li>
+    <li>رابط المنصة: <span dir="ltr">{{ setup.base_url }}</span></li>
+  </ul>
+  <div class="row">
+    <form method="post" action="{{ url_for('admin_test_engines') }}"><button class="sm">اختبار المحركات</button></form>
+    <form method="post" action="{{ url_for('admin_test_email') }}"><button class="sm">إرسال إيميل تجريبي</button></form>
+  </div>
+</div>
+<h2>الطلبات</h2>
+<div class="card table-wrap">
+<table>
+  <thead><tr><th>#</th><th>التاريخ</th><th>الطالب</th><th>العنوان</th><th>اللغة</th><th>ص</th><th>الحالة</th><th></th></tr></thead>
+  <tbody>
+  {% for r in rows %}
+    <tr>
+      <td>{{ r.id }}</td>
+      <td dir="ltr">{{ r.created_at[:16].replace('T', ' ') }}</td>
+      <td>{{ r.student_name }}<br><small dir="ltr">{{ r.email }}</small></td>
+      <td>{{ r.title }}<br><small>{{ r.university }} — {{ r.specialization }}</small></td>
+      <td>{{ 'ع' if r.language == 'ar' else 'EN' }}</td>
+      <td>{{ r.pages }}</td>
+      <td><span class="badge s-{{ r.status }}">{{ labels[r.status] }}</span>
+        {% if r.engines %}<br><small>{{ r.engines }}</small>{% endif %}
+        {% if r.error %}<br><small class="err" title="{{ r.error }}">{{ r.error[:60] }}</small>{% endif %}</td>
+      <td class="actions">
+        {% if r.status in ('pending', 'failed') %}
+        <form method="post" action="{{ url_for('admin_action', req_id=r.id, action='approve') }}"><button class="ok sm">{{ 'إعادة المحاولة' if r.status == 'failed' else 'موافقة' }}</button></form>
+        <form method="post" action="{{ url_for('admin_action', req_id=r.id, action='reject') }}"><button class="danger sm">رفض</button></form>
+        {% endif %}
+      </td>
+    </tr>
+  {% else %}
+    <tr><td colspan="8" class="center">لا توجد طلبات بعد.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+{% endblock %}

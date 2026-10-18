@@ -1,0 +1,6 @@
+.env
+*.db
+output/
+__pycache__/
+screenshot.png
+screenshot.png

@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+  <h1>{{ 'الموافقة على' if action == 'approve' else 'رفض' }} الطلب #{{ r.id }}</h1>
+  <p>الحالة الحالية: <span class="badge s-{{ r.status }}">{{ status }}</span></p>
+  <dl class="info">
+    <dt>الطالب</dt><dd>{{ r.student_name }} — <span dir="ltr">{{ r.email }}</span></dd>
+    <dt>الجامعة</dt><dd>{{ r.university }} / {{ r.college }} / {{ r.department }}</dd>
+    <dt>التخصص</dt><dd>{{ r.specialization }}</dd>
+    <dt>المشرف</dt><dd>{{ r.supervisor }}</dd>
+    <dt>العنوان</dt><dd>{{ r.title }}</dd>
+    <dt>اللغة / الصفحات</dt><dd>{{ 'العربية' if r.language == 'ar' else 'English' }} — {{ r.pages }} صفحة</dd>
+    <dt>التفاصيل</dt><dd class="pre">{{ r.details }}</dd>
+  </dl>
+  {% if r.status in ('pending', 'failed') %}
+  <form method="post">
+    {% if action == 'reject' %}
+      <label>سبب الرفض (اختياري، يُرسل للطالب)<textarea name="reason" rows="3"></textarea></label>
+      <button class="danger">تأكيد الرفض</button>
+    {% else %}
+      <button class="ok">تأكيد الموافقة وبدء إنشاء البحث</button>
+    {% endif %}
+  </form>
+  {% else %}
+  <p class="note">تمت معالجة هذا الطلب مسبقاً.</p>
+  {% endif %}
+</div>
+{% endblock %}

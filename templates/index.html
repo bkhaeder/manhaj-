@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="hero">
+  <h1>اطلب بحثك الأكاديمي</h1>
+  <p>املأ بياناتك وصف ما تريده في البحث، وسيصلك البحث كاملاً بنسختين Word وPDF على بريدك الإلكتروني بعد مراجعة الطلب.</p>
+</section>
+
+{% if errors %}<div class="errors">{% for e in errors %}<div>• {{ e }}</div>{% endfor %}</div>{% endif %}
+
+<form method="post" action="{{ url_for('submit') }}" class="card">
+  <h2>بيانات الطالب</h2>
+  <div class="grid">
+    <label>الاسم الكامل<input name="student_name" required maxlength="120" value="{{ form.student_name or '' }}"></label>
+    <label>البريد الإلكتروني<input name="email" type="email" required dir="ltr" value="{{ form.email or '' }}"></label>
+    <label>الجامعة<input name="university" required maxlength="150" value="{{ form.university or '' }}"></label>
+    <label>الكلية<input name="college" required maxlength="150" value="{{ form.college or '' }}"></label>
+    <label>القسم<input name="department" required maxlength="150" value="{{ form.department or '' }}"></label>
+    <label>التخصص<input name="specialization" required maxlength="150" value="{{ form.specialization or '' }}"></label>
+    <label class="full">اسم المشرف<input name="supervisor" required maxlength="120" value="{{ form.supervisor or '' }}"></label>
+  </div>
+
+  <h2>تفاصيل البحث</h2>
+  <label>عنوان البحث<input name="title" required maxlength="300" value="{{ form.title or '' }}"></label>
+  <label>ماذا تريد داخل البحث؟
+    <textarea name="details" rows="6" required maxlength="2000" placeholder="مثال: أريد التركيز على الجانب التطبيقي، مع دراسة حالة عن ...، وأن يتضمن فصلاً عن الدراسات السابقة...">{{ form.details or '' }}</textarea>
+  </label>
+  <div class="grid">
+    <fieldset>
+      <legend>لغة البحث</legend>
+      <div class="seg">
+        <label><input type="radio" name="language" value="ar" {% if form.language != 'en' %}checked{% endif %}><span>العربية</span></label>
+        <label><input type="radio" name="language" value="en" {% if form.language == 'en' %}checked{% endif %}><span>English</span></label>
+      </div>
+    </fieldset>
+    <label>عدد الصفحات
+      <input name="pages" type="number" min="{{ min_pages }}" max="{{ max_pages }}" required value="{{ form.pages or 15 }}">
+      <small>من {{ min_pages }} إلى {{ max_pages }} صفحة</small>
+    </label>
+  </div>
+
+  <p class="note">البحث المُرسل نموذج مساعد للطالب؛ يُنصح بمراجعته والتحقق من مصادره وتعديله وفق تعليمات القسم والمشرف قبل التسليم.</p>
+  <button type="submit">إرسال الطلب</button>
+</form>
+{% endblock %}

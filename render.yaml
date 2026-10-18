@@ -1,0 +1,26 @@
+# نشر مجاني على Render: New > Blueprint ثم اختر هذا المستودع
+services:
+  - type: web
+    name: manhaj
+    runtime: docker
+    plan: free
+    healthCheckPath: /
+    envVars:
+      - key: SECRET_KEY
+        generateValue: true
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: BREVO_API_KEY
+        sync: false
+      - key: MAIL_FROM
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: MISTRAL_API_KEY
+        sync: false
