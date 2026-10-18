@@ -3,7 +3,8 @@
  *
  * التركيب (مرة واحدة):
  * 1. افتح https://script.google.com ← "مشروع جديد"، احذف ما في المحرر والصق هذا الملف كاملاً.
- * 2. ضع مفتاح Gemini في CONFIG بالأسفل (من https://aistudio.google.com/apikey) ثم احفظ.
+ * 2. ضع مفتاح Gemini في «إعدادات المشروع ⚙️ ← خصائص النص البرمجي (Script properties)» باسم GEMINI_API_KEY
+ *    (أو في CONFIG بالأسفل إن كنت لا تستخدم النشر التلقائي من GitHub) ثم احفظ.
  * 3. من القائمة أعلى المحرر اختر الدالة setup واضغط "تشغيل" (Run) ووافق على الصلاحيات
  *    (Advanced ← Go to project ← Allow).
  * 4. "نشر" (Deploy) ← "نشر جديد" ← النوع "تطبيق ويب" (Web app):
@@ -14,7 +15,9 @@
  * والبحوث تُحفظ في مجلد «منصة منهج» في Drive.
  */
 
-// ===================== الإعدادات: عدّل هذه القيم فقط =====================
+// ===================== الإعدادات =====================
+// أي قيمة هنا يمكن تجاوزها من «إعدادات المشروع ← خصائص النص البرمجي» بالاسم نفسه (مثل GEMINI_API_KEY أو PUBLIC_URL).
+// هذا ضروري مع النشر التلقائي من GitHub: الكود يُستبدل عند كل تحديث، أما خصائص المشروع فتبقى، والمفاتيح لا تُرفع إلى GitHub.
 const CONFIG = {
   GEMINI_API_KEY: '',        // مطلوب: https://aistudio.google.com/apikey
   GROQ_API_KEY: '',          // اختياري (احتياطي ومراجِع): https://console.groq.com/keys
@@ -35,6 +38,20 @@ const CONFIG = {
   PUBLIC_URL: '',            // رابط موقع Google Sites بعد تضمين المنصة فيه (يُستخدم في الإيميلات)
   DELIVERY_TEXT: 'خلال 24 ساعة من تأكيد التحويل',  // مدة التسليم كما تظهر للطالب
 };
+
+/** يطبّق «خصائص النص البرمجي» على CONFIG؛ يعمل تلقائياً في بداية كل تنفيذ. */
+function loadConfig_() {
+  const p = PropertiesService.getScriptProperties().getProperties();
+  Object.keys(CONFIG).forEach(function (k) {
+    if (p[k] === undefined || p[k] === '') return;
+    const cur = CONFIG[k];
+    CONFIG[k] = typeof cur === 'number' ? Number(p[k])
+      : typeof cur === 'boolean' ? /^(true|1|نعم)$/i.test(p[k])
+      : Array.isArray(cur) ? p[k].split(',').map(function (x) { return x.trim(); }).filter(Boolean)
+      : String(p[k]).trim();
+  });
+}
+try { loadConfig_(); } catch (e) { /* قبل منح الصلاحيات أول مرة */ }
 
 const GOVERNORATES = {
   'بغداد': 'Baghdad', 'البصرة': 'Basra', 'نينوى': 'Nineveh', 'أربيل': 'Erbil', 'السليمانية': 'Sulaymaniyah',

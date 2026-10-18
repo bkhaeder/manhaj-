@@ -34,8 +34,14 @@
 - `node tests/ui-test.js <مجلد للصور>`: يفتح الواجهة في Chromium عبر Playwright ويضغط خطوات الطلب.
 - بعد أي تعديل شغّل `node --check` على نسخة ‎.js‎ من الملف، ثم `sim.js`.
 
-### طريقة تحديث المالك
-يلصق الكود الجديد في Apps Script، ثم «نشر ← إدارة عمليات النشر ← ✏️ ← إصدار جديد». إذا تغيّرت `COLS` يشغّل `setup` مرة أخرى.
+### النشر التلقائي (GitHub ← Apps Script)
+- `.github/workflows/deploy-apps-script.yml`: عند كل رفع إلى main يغيّر `Code.gs` أو `appsscript.json`، يرفعهما بـ clasp ‏3.3.0 (`push --force`)، ثم يحدّث النشر الحالي (`update-deployment`)، فيبقى رابط المنصة نفسه.
+- يحتاج ثلاثة أسرار في المستودع: `CLASPRC_JSON` و`SCRIPT_ID` و`DEPLOYMENT_ID`. إذا غابت يتخطى النشر بإشعار، دون فشل.
+- `.claspignore` يقصر الرفع على `Code.gs` و`appsscript.json` (المجلد tests مستثنى).
+- **الإعدادات والمفاتيح تأتي من «خصائص النص البرمجي» (Script Properties)** عبر `loadConfig_()`، لأن الكود يُستبدل عند كل نشر. أي مفتاح في `CONFIG` يمكن تجاوزه بخاصية بالاسم نفسه. `GEMINI_API_KEY` موجود هناك، وليس في الكود.
+- **لا تكتب مفاتيح في Code.gs داخل المستودع أبداً.**
+- إذا تغيّرت `COLS`، يجب أن يشغّل المالك `setup` يدوياً مرة واحدة من المحرر.
+- إذا فشل النشر بخطأ صلاحية (`invalid_grant`)، يعيد المالك `clasp login` ويحدّث السر `CLASPRC_JSON`.
 
 ## النسخة الثانوية: Python/Flask (جذر المستودع)
 `app.py` و`generator.py` و`providers.py` و`docx_builder.py` و`mailer.py`، مع Dockerfile وملف مزامنة لـ Hugging Face. **متأخرة عن نسخة Apps Script**: ما زالت فيها حقل التخصص، ولا يوجد فيها الغلاف العراقي ولا الدفع ولا التتبع. غير مستخدمة حالياً.

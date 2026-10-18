@@ -18,7 +18,7 @@ jobs:
           HF_SPACE: ${{ vars.HF_SPACE }}
         run: |
           if [ -z "$HF_TOKEN" ] || [ -z "$HF_SPACE" ]; then
-            echo "::error::أضف HF_TOKEN (Secret) و HF_SPACE (Variable) في إعدادات المستودع"
-            exit 1
+            echo "::notice::المزامنة مع Hugging Face غير مفعّلة (النسخة المستخدمة هي Apps Script)."
+            exit 0
           fi
           git push --force "https://user:${HF_TOKEN}@huggingface.co/spaces/${HF_SPACE}" HEAD:main

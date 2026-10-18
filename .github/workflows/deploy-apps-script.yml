@@ -1,0 +1,64 @@
+# ينشر google-apps-script/Code.gs تلقائياً على مشروع Apps Script عند كل تحديث في main.
+# يحتاج ثلاثة أسرار في المستودع (Settings ← Secrets and variables ← Actions):
+#   CLASPRC_JSON   محتوى ملف ‎~/.clasprc.json‎ بعد «clasp login»
+#   SCRIPT_ID      رقم المشروع من إعدادات المشروع في Apps Script
+#   DEPLOYMENT_ID  رقم النشر الحالي (نشر ← إدارة عمليات النشر) حتى يبقى رابط المنصة نفسه
+name: Deploy to Google Apps Script
+on:
+  push:
+    branches: [main]
+    paths:
+      - google-apps-script/Code.gs
+      - google-apps-script/appsscript.json
+      - .github/workflows/deploy-apps-script.yml
+  workflow_dispatch:
+
+concurrency:
+  group: apps-script-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check secrets
+        id: check
+        env:
+          CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+          SCRIPT_ID: ${{ secrets.SCRIPT_ID }}
+          DEPLOYMENT_ID: ${{ secrets.DEPLOYMENT_ID }}
+        run: |
+          if [ -z "$CLASPRC_JSON" ] || [ -z "$SCRIPT_ID" ] || [ -z "$DEPLOYMENT_ID" ]; then
+            echo "::notice::الربط مع Apps Script غير مفعّل بعد: أضف CLASPRC_JSON و SCRIPT_ID و DEPLOYMENT_ID في أسرار المستودع."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-node@v4
+        if: steps.check.outputs.ready == 'true'
+        with:
+          node-version: 20
+
+      - name: Install clasp
+        if: steps.check.outputs.ready == 'true'
+        run: npm install -g @google/clasp@3.3.0
+
+      - name: Push and redeploy
+        if: steps.check.outputs.ready == 'true'
+        working-directory: google-apps-script
+        env:
+          CLASPRC_JSON: ${{ secrets.CLASPRC_JSON }}
+          SCRIPT_ID: ${{ secrets.SCRIPT_ID }}
+          DEPLOYMENT_ID: ${{ secrets.DEPLOYMENT_ID }}
+        run: |
+          printf '%s' "$CLASPRC_JSON" > "$HOME/.clasprc.json"
+          node -e 'JSON.parse(require("fs").readFileSync(process.env.HOME + "/.clasprc.json", "utf8"))' \
+            || { echo "::error::قيمة CLASPRC_JSON ليست ملف JSON صالحاً. انسخ محتوى ‎~/.clasprc.json‎ كاملاً."; exit 1; }
+          printf '{"scriptId":"%s"}' "$(echo "$SCRIPT_ID" | tr -d '[:space:]')" > .clasp.json
+          clasp push --force
+          clasp update-deployment "$(echo "$DEPLOYMENT_ID" | tr -d '[:space:]')" --description "GitHub ${GITHUB_SHA::7}"
+          rm -f "$HOME/.clasprc.json"
+          echo "::notice::تم نشر الإصدار الجديد على رابط المنصة نفسه."
