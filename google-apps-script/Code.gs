@@ -32,6 +32,8 @@ const CONFIG = {
   PAYMENT_METHOD: 'كي كارد',
   PAYMENT_ACCOUNT: '3001941925',
   VERSE_PAGE: true,          // صفحة «بسم الله الرحمن الرحيم» والآية بعد الغلاف (في البحوث العربية)
+  PUBLIC_URL: '',            // رابط موقع Google Sites بعد تضمين المنصة فيه (يُستخدم في الإيميلات)
+  DELIVERY_TEXT: 'خلال 24 ساعة من تأكيد التحويل',  // مدة التسليم كما تظهر للطالب
 };
 
 const GOVERNORATES = {
@@ -138,10 +140,30 @@ function saveJob_(id, job) {
 // ----------------------------- واجهة الويب -----------------------------
 function doGet(e) {
   const p = (e && e.parameter) || {};
-  const html = (p.id && p.a && p.sig) ? reviewPage_(p) : formPage_();
+  const html = (p.id && p.a && p.sig) ? reviewPage_(p) : formPage_(p.track);
   return HtmlService.createHtmlOutput(html)
     .setTitle('منصة منهج')
-    .addMetaTag('viewport', 'width=device-width, initial-scale=1');
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1')
+    // يسمح بعرض المنصة داخل موقع Google Sites (فيختفي شريط تنبيه Google)
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+}
+
+function publicUrl_() { return CONFIG.PUBLIC_URL || ScriptApp.getService().getUrl(); }
+
+/** يُستدعى من صفحة «تابع طلبك»: يعيد مرحلة الطلب إذا تطابق رقمه مع البريد. */
+function trackRequest(id, email) {
+  const r = getReq_(parseInt(String(id).replace(/[^0-9٠-٩]/g, '').replace(/[٠-٩]/g, function (c) { return '٠١٢٣٤٥٦٧٨٩'.indexOf(c); }), 10));
+  if (!r || String(r.email).trim().toLowerCase() !== String(email || '').trim().toLowerCase()) {
+    return { ok: false, error: 'لم نجد طلباً بهذا الرقم والبريد. تأكد منهما كما وصلا في إيميل التأكيد.' };
+  }
+  const stage = { pending: 1, approved: 2, generating: 2, failed: 2, sent: 4, rejected: -1 }[r.status];
+  let progress = 0;
+  if (r.status === 'generating' || r.status === 'approved') {
+    const job = loadJob_(r.id);
+    if (job && job.outline) progress = Math.round(100 * job.step / steps_(job).length);
+  }
+  return { ok: true, id: r.id, title: r.title, stage: stage, progress: progress, rejected: r.status === 'rejected',
+           delayed: r.status === 'failed', created: Utilities.formatDate(new Date(r.created), 'Asia/Baghdad', 'yyyy/MM/dd') };
 }
 
 function sign_(id, action) {
@@ -190,7 +212,8 @@ function submitRequest(d) {
     mail_(r.email, 'استلمنا طلبك - منصة منهج',
       '<p>مرحباً ' + esc_(r.student_name) + '،</p><p>استلمنا طلبك لبحث بعنوان <b>«' + esc_(r.title) +
       '»</b> (رقم الطلب #' + id + '). سيُراجَع الطلب، وسيصلك إيميل بالنتيجة.</p>' +
-      paymentHtml_(r));
+      paymentHtml_(r) + '<p style="margin-top:14px">تابع حالة طلبك في أي وقت من <a href="' + publicUrl_() +
+      '">صفحة المنصة</a> بالضغط على «تابع طلبك» وكتابة رقم الطلب <b>#' + id + '</b> وبريدك.</p>');
   } catch (e) {
     console.error('تعذر إرسال الإيميل: ' + e);
   }
@@ -207,6 +230,10 @@ function reviewAction(id, action, sig, reason) {
     setReq_(id, { status: 'approved', error: '' });
     saveJob_(id, { step: 0, attempts: 0, parts: {}, engines: [] });
     scheduleNext_(1);
+    safeMail_(r.email, 'بدأنا كتابة بحثك - منصة منهج',
+      '<p>مرحباً ' + esc_(r.student_name) + '،</p><p>تأكدنا من طلبك رقم <b>#' + id + '</b>، وبدأنا الآن كتابة بحثك بعنوان <b>«' +
+      esc_(r.title) + '»</b>.</p><p>يصلك البحث عادةً خلال ساعة على هذا البريد بملفي Word وPDF. يمكنك متابعة تقدّم الكتابة من ' +
+      '<a href="' + publicUrl_() + '">صفحة المنصة</a> بالضغط على «تابع طلبك».</p>');
     return 'تمت الموافقة ✓ يجري الآن إنشاء البحث (عدة دقائق)، وسيُرسل للطالب تلقائياً وتصلك رسالة عند الانتهاء.';
   }
   if (action === 'reject') {
@@ -829,7 +856,7 @@ const PATTERN = "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/s
   STAR_PATH.replace(/ /g, '%20') + "' fill='none' stroke='black' stroke-width='2.5'/%3E%3C/svg%3E\")";
 
 const CSS = '<link rel="preconnect" href="https://fonts.googleapis.com">' +
-  '<link href="https://fonts.googleapis.com/css2?family=Reem+Kufi:wght@500;700&family=Readex+Pro:wght@300;400;500;600&display=swap" rel="stylesheet">' +
+  '<link href="https://fonts.googleapis.com/css2?family=Reem+Kufi:wght@500;700&family=Readex+Pro:wght@300;400;500;600&family=Amiri:wght@400;700&display=swap" rel="stylesheet">' +
   '<style>' +
   ':root{--lapis:#1d3a8a;--lapis-deep:#13275e;--turq:#17a398;--ink:#141b2d;--muted:#5b6478;--line:#dfe3ec;--bg:#f5f7fb;' +
   '--card:#ffffff;--field:#f8f9fc;--on-lapis:#ffffff;--gold:#d9a521;--ok:#16825d;--err:#c2412d;--err-bg:#fdeeea;--pattern:#1d3a8a;' +
@@ -905,6 +932,40 @@ const CSS = '<link rel="preconnect" href="https://fonts.googleapis.com">' +
   '.acct b{font-family:var(--display);font-size:1.5rem;letter-spacing:.12em;direction:ltr;font-variant-numeric:tabular-nums;user-select:all;min-width:0}' +
   '.acct button{padding:8px 14px;font-size:.88rem;background:var(--turq);color:#fff;white-space:nowrap;flex:none}' +
   '.must{background:color-mix(in srgb,var(--gold) 18%,var(--card));border-radius:10px;padding:8px 12px;font-size:.88rem;margin:0}' +
+  /* الشريط العلوي وزر التتبع */
+  '.topbar{display:flex;align-items:center;justify-content:space-between;gap:10px}' +
+  '.topbtn{background:rgba(255,255,255,.14);color:#fff;border:1px solid rgba(255,255,255,.28);padding:8px 16px;font-size:.9rem;border-radius:99px}' +
+  '.topbtn:hover{background:rgba(255,255,255,.22)}' +
+  '.herolinks{display:flex;flex-wrap:wrap;gap:14px;margin-top:16px;font-size:.92rem}.herolinks a{color:#bfe9e4;text-decoration:none;border-bottom:1px solid rgba(191,233,228,.4)}' +
+  /* تتبع الطلب */
+  '#track{margin-bottom:22px}.track-form{display:grid;grid-template-columns:1fr 1.6fr auto;gap:10px;align-items:end}' +
+  '@media(max-width:560px){.track-form{grid-template-columns:1fr}}.track-form .f{margin:0}.track-form button{background:var(--lapis);color:var(--on-lapis)}' +
+  '.tl{list-style:none;margin:18px 0 0;padding:0;display:grid;gap:0}' +
+  '.tl li{position:relative;padding:0 34px 18px 0;color:var(--muted)}.tl li:last-child{padding-bottom:0}' +
+  '.tl li::before{content:"";position:absolute;right:7px;top:8px;width:14px;height:14px;border-radius:50%;background:var(--card);border:2px solid var(--line)}' +
+  '.tl li::after{content:"";position:absolute;right:13px;top:24px;bottom:-6px;width:2px;background:var(--line)}.tl li:last-child::after{display:none}' +
+  '.tl li.done{color:var(--ink)}.tl li.done::before{background:var(--turq);border-color:var(--turq)}.tl li.done::after{background:var(--turq)}' +
+  '.tl li.now{color:var(--ink);font-weight:600}.tl li.now::before{border-color:var(--lapis);box-shadow:0 0 0 5px color-mix(in srgb,var(--lapis) 18%,transparent)}' +
+  '.tl small{display:block;font-weight:400;color:var(--muted)}' +
+  '.bar{height:8px;border-radius:9px;background:var(--line);overflow:hidden;margin-top:6px;max-width:260px}.bar i{display:block;height:100%;background:linear-gradient(90deg,var(--turq),var(--lapis));border-radius:9px;transition:width .6s}' +
+  '.trk-head{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-top:16px;padding-top:14px;border-top:1.5px dashed var(--line)}' +
+  '.trk-head b{font-family:var(--display);color:var(--lapis)}' +
+  /* نموذج البحث */
+  '.sec-title{font-family:var(--display);color:var(--lapis);font-size:1.35rem;margin:34px 0 4px;text-align:center}.sec-sub{text-align:center;color:var(--muted);margin:0 0 16px;font-size:.92rem}' +
+  '.pages3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}' +
+  '.pg{min-width:0}.pg figcaption{text-align:center;font-size:.85rem;color:var(--muted);margin-top:8px}' +
+  '.paper{aspect-ratio:210/297;background:#fff;color:#111;border-radius:6px;box-shadow:0 10px 30px rgba(20,27,45,.16),0 0 0 1px rgba(20,27,45,.06);' +
+  'padding:9% 8%;font-family:Amiri,serif;font-size:clamp(4.6px,1.25vw,8.4px);line-height:1.7;display:flex;flex-direction:column;overflow:hidden;direction:rtl}' +
+  '.paper .c{text-align:center}.paper .b{font-weight:700}.paper .t{font-size:1.9em;font-weight:700;line-height:1.35;margin:1.6em 0 .4em}' +
+  '.paper .sp{flex:1}.paper h5{font-size:1.5em;text-align:center;margin:.2em 0 .6em}.paper h6{font-size:1.2em;margin:.8em 0 .3em}' +
+  '.paper table{width:100%;border-collapse:collapse;font-size:.95em}.paper td{border:.5px solid #333;padding:.25em .5em}.paper td:first-child{width:12%;text-align:center}' +
+  '.paper tr:first-child td{background:#e8ebf2;font-weight:700}.paper p{margin:0 0 .5em;text-align:justify}' +
+  '@media(max-width:560px){.pages3{grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}}' +
+  /* الأسئلة الشائعة */
+  '.faq{display:grid;gap:8px}.faq details{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:4px 16px}' +
+  '.faq summary{cursor:pointer;font-weight:600;padding:10px 0;list-style:none;display:flex;justify-content:space-between;gap:10px}' +
+  '.faq summary::-webkit-details-marker{display:none}.faq summary::after{content:"+";color:var(--turq);font-size:1.3rem;line-height:1}' +
+  '.faq details[open] summary::after{content:"–"}.faq details p{margin:0 0 12px;color:var(--muted);font-size:.93rem}' +
   '.admin-top{background:var(--lapis-deep);color:#fff;padding-block:14px}' +
   '.ok{background:var(--ok);color:#fff;flex:1}.danger{background:var(--err);color:#fff;flex:1}' +
   '</style>';
@@ -915,7 +976,50 @@ function shell_(content, hero) {
     '<main class="wrap">' + content + '</main><footer>منصة منهج · بحوث أكاديمية منظمة وفق المنهج العلمي</footer></body></html>';
 }
 
-function formPage_() {
+function samplePages_() {
+  const lines = function (n) { let h = ''; for (let i = 0; i < n; i++) h += '<p>' + SAMPLE_TEXT[i % SAMPLE_TEXT.length] + '</p>'; return h; };
+  return '<h2 class="sec-title" id="sample">هكذا يصلك بحثك</h2>' +
+    '<p class="sec-sub">غلاف رسمي وفق المعتمد في الجامعات العراقية، وفهرس، وفصول ومباحث منظمة</p>' +
+    '<div class="pages3">' +
+    '<figure class="pg" style="margin:0"><div class="paper"><div class="c b">جمهورية العراق</div><div class="c b">وزارة التعليم العالي والبحث العلمي</div>' +
+    '<div class="c b">جامعة بغداد</div><div class="c b">كلية التربية</div><div class="c b">قسم العلوم التربوية والنفسية</div>' +
+    '<div class="c" style="margin-top:2.2em">بحث بعنوان</div><div class="c t">أثر التعلم الإلكتروني في التحصيل الدراسي لطلبة الجامعة</div>' +
+    '<div class="c" style="font-size:.9em">بحث مقدَّم إلى قسم العلوم التربوية والنفسية – كلية التربية، وهو جزء من متطلبات الدراسة</div>' +
+    '<div class="sp"></div><div class="c b">إعداد الطالب</div><div class="c">أحمد علي حسن</div><div class="c b" style="margin-top:.8em">بإشراف</div>' +
+    '<div class="c">أ.م.د. سارة محمود</div><div class="sp"></div><div class="c b">بغداد ١٤٤٨هـ – ٢٠٢٦م</div></div><figcaption>الغلاف</figcaption></figure>' +
+    '<figure class="pg" style="margin:0"><div class="paper"><h5>المحتويات</h5><table>' +
+    [['ت', 'الموضوع'], ['١', 'المستخلص'], ['٢', 'المقدمة'], ['٣', 'الفصل الأول: الإطار النظري للتعلم الإلكتروني'],
+     ['٤', '&nbsp;&nbsp;المبحث الأول: المفهوم والنشأة'], ['٥', '&nbsp;&nbsp;المبحث الثاني: الأنماط والخصائص'],
+     ['٦', 'الفصل الثاني: أثره في التحصيل الدراسي'], ['٧', '&nbsp;&nbsp;المبحث الأول: انعكاساته على التحصيل'],
+     ['٨', '&nbsp;&nbsp;المبحث الثاني: الدراسات السابقة'], ['٩', 'الخاتمة'], ['١٠', 'المصادر والمراجع']].map(function (r) {
+      return '<tr><td>' + r[0] + '</td><td>' + r[1] + '</td></tr>'; }).join('') +
+    '</table></div><figcaption>المحتويات</figcaption></figure>' +
+    '<figure class="pg" style="margin:0"><div class="paper"><h5>الفصل الأول</h5><div class="c b" style="font-size:1.25em;margin-bottom:.8em">الإطار النظري للتعلم الإلكتروني</div>' +
+    '<h6>المبحث الأول: المفهوم والنشأة</h6>' + lines(6) + '</div><figcaption>من داخل البحث</figcaption></figure>' +
+    '</div>';
+}
+
+const SAMPLE_TEXT = [
+  'يمثّل التعلم الإلكتروني تحولاً جوهرياً في فلسفة التعليم الجامعي، إذ انتقل بالعملية التعليمية من حدود القاعة الدراسية إلى فضاء رقمي مفتوح يتيح للطالب الوصول إلى المعرفة في أي وقت (الزهراني، 2020).',
+  'ويرى الباحث أن هذا التحول لم يكن تقنياً فحسب، بل امتد ليعيد تشكيل أدوار كل من الأستاذ والطالب، فصار الأول ميسّراً للتعلم وصار الثاني شريكاً فاعلاً في بنائه.',
+  'وتتباين تعريفات التعلم الإلكتروني بتباين المنطلقات النظرية لأصحابها؛ فمنهم من ركّز على الوسيط التقني، ومنهم من ركّز على طبيعة التفاعل بين المتعلم والمحتوى (Garrison, 2017).',
+];
+
+function faq_(price) {
+  const q = [
+    ['كم يستغرق إعداد البحث؟', 'يصلك البحث ' + CONFIG.DELIVERY_TEXT + '، على البريد الإلكتروني الذي كتبته في الطلب.'],
+    ['كيف أدفع؟', 'حوّل ' + price + ' دينار عبر ' + CONFIG.PAYMENT_METHOD + ' إلى الحساب رقم ' + CONFIG.PAYMENT_ACCOUNT +
+      '، واكتب اسمك الكامل في ملاحظات التحويل حتى نتعرف على دفعتك.'],
+    ['ماذا أستلم بالضبط؟', 'ملفين: Word قابل للتعديل وPDF جاهز للطباعة. يتضمن البحث غلافاً رسمياً، وفهرساً، ومستخلصاً، ومقدمة، وفصولاً ومباحث، وخاتمة بالاستنتاجات والتوصيات، وقائمة مصادر.'],
+    ['هل يمكنني تعديل البحث بعد استلامه؟', 'نعم، نسخة Word قابلة للتعديل بالكامل، فيمكنك إضافة ما يطلبه مشرفك أو تغيير أي جزء.'],
+    ['هل البحث منقول من مصادر أخرى؟', 'لا، يُكتب كل بحث من جديد بصياغة خاصة به مع توثيق الأفكار بأسلوب APA. ننصحك بمراجعته والتحقق من المصادر قبل التسليم.'],
+    ['كيف أعرف ما حدث لطلبي؟', 'اضغط «تابع طلبك» في أعلى الصفحة، واكتب رقم طلبك وبريدك، فترى المرحلة التي وصل إليها.'],
+  ];
+  return '<h2 class="sec-title" id="faq">الأسئلة الشائعة</h2><p class="sec-sub">أجوبة مختصرة عن أكثر ما يسأل عنه الطلبة</p><div class="faq">' +
+    q.map(function (x) { return '<details><summary>' + x[0] + '</summary><p>' + x[1] + '</p></details>'; }).join('') + '</div>';
+}
+
+function formPage_(trackParam) {
   const price = CONFIG.PRICE_IQD.toLocaleString('en-US');
   const payBox = '<div class="pay"><h3>الدفع عبر «' + CONFIG.PAYMENT_METHOD + '»</h3>' +
     '<p>حوّل مبلغ <b>' + price + ' دينار</b> إلى رقم الحساب:</p>' +
@@ -931,14 +1035,23 @@ function formPage_() {
   };
   const hero =
     '<header class="hero"><div class="wrap">' +
-    '<div class="brand">' + LOGO + ' منصة منهج</div>' +
+    '<div class="topbar"><div class="brand">' + LOGO + ' منصة منهج</div>' +
+    '<button type="button" class="topbtn" id="openTrack">تابع طلبك</button></div>' +
     '<h1>بحثك الأكاديمي كاملاً، <em>جاهز للتسليم</em></h1>' +
     '<p>أخبرنا بموضوعك وما تريده فيه، ويصلك البحث مكتوباً وفق المنهج العلمي بملفي Word وPDF على بريدك الإلكتروني.</p>' +
     '<div class="price"><b>' + price + '</b><span>دينار عراقي</span><small>الدفع عبر ' + CONFIG.PAYMENT_METHOD + '</small></div>' +
     '<ul class="perks"><li>حتى ' + CONFIG.MAX_PAGES + ' صفحة</li><li>عربي أو إنجليزي</li><li>توثيق بأسلوب APA</li><li>Word + PDF</li></ul>' +
+    '<div class="herolinks"><a href="#sample">شاهد نموذجاً من البحث</a><a href="#faq">الأسئلة الشائعة</a></div>' +
     '</div></header>';
   const body =
     '<ol class="how"><li><b>املأ الطلب</b>دقيقتان فقط</li><li><b>نراجع طلبك</b>ونرسل لك الرد</li><li><b>استلم بحثك</b>على بريدك الإلكتروني</li></ol>' +
+    '<section class="card" id="track" hidden><div class="stepname"><h2>تابع طلبك</h2>' +
+    '<button type="button" class="ghost" id="closeTrack" style="padding:6px 14px">إغلاق</button></div>' +
+    '<form class="track-form" id="tf" novalidate>' +
+    '<label class="f"><span>رقم الطلب</span><input id="tid" inputmode="numeric" placeholder="مثال: 17" autocomplete="off"></label>' +
+    '<label class="f"><span>بريدك الإلكتروني</span><input id="tem" type="email" dir="ltr" placeholder="name@gmail.com" autocomplete="email"></label>' +
+    '<button type="submit" id="tbtn">عرض الحالة</button></form>' +
+    '<div class="alert" id="terr"></div><div id="tres"></div></section>' +
     '<section class="card" id="app">' +
     '<div id="wizard">' +
     '<div class="prog" aria-hidden="true"><i class="on"></i><i></i><i></i><i></i></div>' +
@@ -986,8 +1099,9 @@ function formPage_() {
     '<li>بعد وصول التحويل نراجع طلبك ونبدأ كتابة البحث.</li><li>يصلك البحث على بريدك بملفي Word وPDF.</li></ul>' +
     '<p class="note" style="margin-top:14px">لا تجد رسالتنا؟ تفقّد مجلد الرسائل غير المرغوب فيها (Spam).</p>' +
     '<button type="button" class="ghost" id="again">طلب بحث آخر</button></div>' +
-    '</section>';
-  return shell_(body, hero) + '<script>' + CLIENT_JS + '</script>';
+    '</section>' + samplePages_() + faq_(price);
+  const trackId = String(trackParam || '').replace(/[^0-9]/g, '');
+  return shell_(body, hero) + '<script>var TRACK_ID="' + trackId + '";' + CLIENT_JS + '</script>';
 }
 
 // كود الواجهة في المتصفح: معالج من 4 خطوات، تحقق فوري، حفظ تلقائي للبيانات، وإرسال دون إعادة تحميل.
@@ -1025,11 +1139,28 @@ const CLIENT_JS = [
   'f.addEventListener("submit",function(e){e.preventDefault();if(cur<steps.length-1){if(check(cur))show(cur+1);return}',
   ' var d={};new FormData(f).forEach(function(v,k){d[k]=v});next.disabled=true;back.disabled=true;next.textContent="جارٍ الإرسال…";$("alert").style.display="none";',
   ' google.script.run.withSuccessHandler(function(r){next.disabled=false;back.disabled=false;',
-  '  if(r.ok){$("wizard").hidden=true;$("done").hidden=false;$("oid").textContent="#"+r.id;$("oem").textContent=r.email;$("app").scrollIntoView({block:"start"});return}',
+  '  if(r.ok){try{localStorage.setItem(KEY+"-last",String(r.id))}catch(e){}$("wizard").hidden=true;$("done").hidden=false;$("oid").textContent="#"+r.id;$("oem").textContent=r.email;$("app").scrollIntoView({block:"start"});return}',
   '  $("alert").innerHTML=r.errors.map(esc).join("<br>");$("alert").style.display="block";next.textContent="أرسل الطلب"})',
   ' .withFailureHandler(function(){next.disabled=false;back.disabled=false;next.textContent="أرسل الطلب";$("alert").textContent="تعذر الإرسال. تحقق من اتصالك بالإنترنت وحاول مرة أخرى.";$("alert").style.display="block"})',
   ' .submitRequest(d)});',
   '$("again").addEventListener("click",function(){$("title").value="";$("details").value="";$("cnt").textContent="0 / "+$("details").maxLength;$("done").hidden=true;$("wizard").hidden=false;show(2)});',
+  'var STAGES=["استلمنا طلبك","التحقق من الدفع ومراجعة الطلب","كتابة البحث","أُرسل البحث إلى بريدك"];',
+  'function openTrack(){$("track").hidden=false;$("track").scrollIntoView({block:"start"});$("tid").focus()}',
+  '$("openTrack").addEventListener("click",openTrack);$("closeTrack").addEventListener("click",function(){$("track").hidden=true});',
+  'try{var em=JSON.parse(localStorage.getItem(KEY)||"{}").email;if(em)$("tem").value=em;var last=localStorage.getItem(KEY+"-last");if(last&&!TRACK_ID)$("tid").value=last}catch(e){}',
+  '$("tf").addEventListener("submit",function(e){e.preventDefault();var b=$("tbtn");if(!$("tid").value.trim()||!valid("tem")){$("terr").textContent="اكتب رقم الطلب وبريدك الإلكتروني.";$("terr").style.display="block";return}',
+  ' b.disabled=true;b.textContent="جارٍ البحث…";$("terr").style.display="none";',
+  ' google.script.run.withSuccessHandler(function(r){b.disabled=false;b.textContent="عرض الحالة";if(!r.ok){$("terr").textContent=r.error;$("terr").style.display="block";$("tres").innerHTML="";return}',
+  '  var h="<div class=\\"trk-head\\"><span>طلب <b>#"+r.id+"</b> · "+esc(r.title)+"</span><span>"+r.created+"</span></div>";',
+  '  if(r.rejected){h+="<p class=\\"alert\\" style=\\"display:block;margin-top:14px\\">لم تتم الموافقة على هذا الطلب، وأرسلنا لك السبب على بريدك.</p>"}',
+  '  else{h+="<ol class=\\"tl\\">"+STAGES.map(function(s,i){var cls=i<r.stage||r.stage===4?"done":(i===r.stage?"now":"");var extra="";',
+  '   if(i===2&&r.stage===2){extra=r.delayed?"<small>تأخير بسيط، نعمل عليه</small>":"<small>اكتمل "+r.progress+"%</small><div class=\\"bar\\"><i style=\\"width:"+Math.max(4,r.progress)+"%\\"></i></div>"}',
+  '   if(i===1&&r.stage===1)extra="<small>حوّل المبلغ واكتب اسمك في ملاحظات التحويل إن لم تفعل بعد</small>";',
+  '   return "<li class=\\""+cls+"\\">"+s+extra+"</li>"}).join("")+"</ol>"}',
+  '  $("tres").innerHTML=h})',
+  ' .withFailureHandler(function(){b.disabled=false;b.textContent="عرض الحالة";$("terr").textContent="تعذر الاتصال. حاول مرة أخرى.";$("terr").style.display="block"})',
+  ' .trackRequest($("tid").value,$("tem").value)});',
+  'if(TRACK_ID){$("tid").value=TRACK_ID;openTrack()}',
   'load();show(0,false);',
 ].join('\n');
 
