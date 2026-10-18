@@ -12,5 +12,6 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
-ENV PORT=10000 PYTHONUNBUFFERED=1
+# Hugging Face يشغّل الحاوية بمستخدم غير root؛ نكتب الملفات المتغيرة في /tmp
+ENV PORT=10000 PYTHONUNBUFFERED=1 HOME=/tmp DB_PATH=/tmp/manhaj.db OUTPUT_DIR=/tmp/output
 CMD gunicorn -w 1 --threads 8 --timeout 120 -b 0.0.0.0:$PORT app:app

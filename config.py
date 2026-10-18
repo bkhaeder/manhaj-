@@ -6,9 +6,10 @@ load_dotenv()
 ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "")
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "")
 SECRET_KEY = os.environ.get("SECRET_KEY", "dev-secret-change-me")
-# على Render يُضبط RENDER_EXTERNAL_URL تلقائياً
-BASE_URL = (os.environ.get("BASE_URL") or os.environ.get("RENDER_EXTERNAL_URL")
-            or "http://localhost:5000").rstrip("/")
+# يُكتشف تلقائياً على Hugging Face Spaces (SPACE_HOST) وعلى Render (RENDER_EXTERNAL_URL)
+_space_host = os.environ.get("SPACE_HOST", "").split(",")[0].strip()
+BASE_URL = (os.environ.get("BASE_URL") or (f"https://{_space_host}" if _space_host else "")
+            or os.environ.get("RENDER_EXTERNAL_URL") or "http://localhost:5000").rstrip("/")
 
 SMTP_HOST = os.environ.get("SMTP_HOST", "smtp.gmail.com")
 SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
