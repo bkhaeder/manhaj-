@@ -8,7 +8,7 @@ import logging
 import os
 import threading
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import requests
 
@@ -25,6 +25,7 @@ class Provider:
     max_tokens: int = 16000
     extra: dict = field(default_factory=dict)
     headers: dict = field(default_factory=dict)
+    fixed_model: str = ""
 
     @property
     def key(self):
@@ -32,13 +33,17 @@ class Provider:
 
     @property
     def model(self):
-        return os.environ.get(self.model_env, "").strip() or self.default_model
+        return self.fixed_model or os.environ.get(self.model_env, "").strip() or self.default_model
+
+    @property
+    def id(self):
+        return f"{self.name}:{self.model}"
 
 
 PROVIDERS = {
     "gemini": Provider(
         "gemini", "GEMINI_API_KEY", "https://generativelanguage.googleapis.com/v1beta/openai",
-        "GEMINI_MODEL", "gemini-2.5-flash", extra={"reasoning_effort": "low"}),
+        "GEMINI_MODEL", "gemini-flash-latest", extra={"reasoning_effort": "low"}),
     "groq": Provider(
         "groq", "GROQ_API_KEY", "https://api.groq.com/openai/v1",
         "GROQ_MODEL", "llama-3.3-70b-versatile", max_tokens=8000),
@@ -53,7 +58,11 @@ PROVIDERS = {
                        default_model="claude-opus-5-5", max_tokens=32000),
 }
 
+# حصة Gemini المجانية منفصلة لكل نموذج (نحو 20 طلباً يومياً لكل نموذج)، لذلك نجرب عدة نماذج بالترتيب
+GEMINI_MODELS = "gemini-flash-latest,gemini-3.7-flash,gemini-3.6-flash,gemini-3.5-flash,gemini-3-flash-preview"
+
 COOLDOWN_SECONDS = 90
+MAX_COOLDOWN = 6 * 3600
 _cooldown: dict[str, float] = {}
 _lock = threading.Lock()
 
@@ -68,7 +77,17 @@ class Refusal(Exception):
 
 def enabled() -> list[Provider]:
     order = os.environ.get("AI_ENGINES", "gemini,groq,openrouter,mistral,claude")
-    return [PROVIDERS[n.strip()] for n in order.split(",") if n.strip() in PROVIDERS and PROVIDERS[n.strip()].key]
+    result = []
+    for n in (x.strip() for x in order.split(",")):
+        p = PROVIDERS.get(n)
+        if not p or not p.key:
+            continue
+        if n == "gemini" and not os.environ.get("GEMINI_MODEL"):
+            models = os.environ.get("GEMINI_MODELS", GEMINI_MODELS)
+            result += [replace(p, fixed_model=m.strip()) for m in models.split(",") if m.strip()]
+        else:
+            result.append(p)
+    return result
 
 
 def complete(system: str, prompt: str, json_mode: bool = False, start: int = 0,
@@ -85,7 +104,7 @@ def complete(system: str, prompt: str, json_mode: bool = False, start: int = 0,
     errors = []
     for _pass in range(2):  # جولة ثانية بعد انتظار، إذا كانت كل المحركات في فترة التهدئة
         for p in engines:
-            if _cooldown.get(p.name, 0) > time.time():
+            if _cooldown.get(p.id, 0) > time.time():
                 continue
             try:
                 text = call_one(p, system, prompt, json_mode)
@@ -93,15 +112,15 @@ def complete(system: str, prompt: str, json_mode: bool = False, start: int = 0,
                     raise ValueError("رد فارغ")
                 if validate:
                     validate(text)
-                return text.strip(), p.name
+                return text.strip(), p.id
             except Exception as e:
-                msg = f"{p.name}: {type(e).__name__}: {str(e)[:300]}"
+                msg = f"{p.id}: {type(e).__name__}: {str(e)[:300]}"
                 log.warning("فشل المحرك %s", msg)
                 errors.append(msg)
                 if _is_rate_limit(e):
                     with _lock:
-                        _cooldown[p.name] = time.time() + COOLDOWN_SECONDS
-        soonest = min((_cooldown.get(p.name, 0) for p in engines), default=0) - time.time()
+                        _cooldown[p.id] = time.time() + _retry_after(e)
+        soonest = min((_cooldown.get(p.id, 0) for p in engines), default=0) - time.time()
         if 0 < soonest <= COOLDOWN_SECONDS:
             time.sleep(soonest + 1)
         else:
@@ -123,6 +142,19 @@ def ping_all() -> list[tuple[str, str, bool, str]]:
         except Exception as e:
             results.append((p.name, p.model, False, f"{type(e).__name__}: {str(e)[:200]}"))
     return results
+
+
+def _retry_after(e) -> float:
+    """مدة الانتظار التي يطلبها المزوّد (مثلاً حتى تجدد الحصة اليومية)."""
+    try:
+        data = e.response.json()
+        data = data[0] if isinstance(data, list) else data
+        for d in data["error"].get("details", []):
+            if "retryDelay" in d:
+                return min(float(d["retryDelay"].rstrip("s")), MAX_COOLDOWN)
+    except Exception:
+        pass
+    return COOLDOWN_SECONDS
 
 
 def _is_rate_limit(e) -> bool:

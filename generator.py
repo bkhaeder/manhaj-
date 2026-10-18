@@ -9,8 +9,23 @@ import re
 
 import providers
 
-WORDS_PER_PAGE = 250  # تقريباً: خط 14، تباعد 1.5
-REVIEW = os.environ.get("AI_REVIEW", "1") == "1"
+WORDS_PER_PAGE = 155  # مقيس فعلياً بخط Amiri 14، تباعد 1.5، صفحة A4
+
+
+def plan_sizes(pages: int) -> dict:
+    """يوزّع عدد الكلمات بحيث يقارب عدد صفحات الملف النهائي ما طلبه الطالب."""
+    n_chapters = 2 if pages <= 12 else 3
+    refs = max(5, min(15, pages))
+    # الغلاف والمحتويات صفحتان، وكل فصل والمراجع تبدأ بصفحة جديدة (نحو 0.4 صفحة ضائعة لكل منها)،
+    # وكل 8 مراجع تشغل صفحة تقريباً
+    content_pages = max(pages - 2 - 0.4 * (n_chapters + 1) - refs / 8, 1.5)
+    total = int(content_pages * WORDS_PER_PAGE)
+    s = {"chapters": n_chapters, "refs": refs, "abstract": max(60, int(total * 0.08)),
+         "intro": int(total * 0.15), "conc": int(total * 0.12)}
+    s["body"] = total - s["abstract"] - s["intro"] - s["conc"]
+    return s
+# المراجعة تضاعف عدد الطلبات؛ معطلة افتراضياً للحفاظ على الحصص المجانية
+REVIEW = os.environ.get("AI_REVIEW", "0") == "1"
 
 
 class GenerationError(Exception):
@@ -41,6 +56,7 @@ def _system_prompt(r) -> str:
 - لا تخترع إحصائيات أو اقتباسات أو مصادر. استشهد فقط بمصادر حقيقية معروفة أنت واثق من وجودها.
 - استخدم Markdown بسيطاً فقط: "### " لعناوين المباحث، و"- " للنقاط، و**نص** للتأكيد.
   لا جداول ولا أكواد ولا عنوان رئيسي بـ "#".
+- التزم بعدد الكلمات المطلوب في كل جزء تقريباً ولا تتجاوزه.
 - اكتب المحتوى مباشرة دون أي تمهيد أو تعليق موجّه للقارئ مثل "إليك..." أو "بالتأكيد".
 """
 
@@ -79,11 +95,13 @@ def _parse_outline(text: str) -> dict:
     chapters = data.get("chapters") or []
     if not data.get("title") or not chapters or not all(c.get("title") and c.get("sections") for c in chapters):
         raise ValueError("خطة البحث غير مكتملة")
+    # نحذف «الفصل الأول:» و«المبحث الأول:» من العناوين لأن المستند يضيف الترقيم بنفسه
+    strip = lambda t: re.sub(r"^\s*(الفصل|المبحث|Chapter|Section)\s+[^:：\-–]{1,20}[:：\-–]\s*", "", str(t), flags=re.I).strip()
+    data["chapters"] = [{"title": strip(c["title"]), "sections": [strip(x) for x in c["sections"]]} for c in chapters]
     return data
 
 
-def _outline(r, body_words: int, used) -> dict:
-    n_chapters = 2 if r["pages"] <= 12 else 3
+def _outline(r, body_words: int, n_chapters: int, used) -> dict:
     prompt = (f"ضع خطة البحث: عنواناً نهائياً دقيقاً (حسّن العنوان المقترح إن لزم)، "
               f"و{n_chapters} فصول، لكل فصل 2 إلى 3 مباحث. حجم متن البحث نحو {body_words} كلمة. "
               "لا تُدرج المقدمة أو الخاتمة أو المراجع ضمن الفصول.\n"
@@ -102,16 +120,12 @@ def _outline_text(outline) -> str:
 def generate(r, progress=lambda msg: None) -> dict:
     """يعيد قاموساً: title, abstract, introduction, chapters[{title, body}], conclusion, references, engines."""
     used: list[str] = []
-    # نخصم صفحتين تقريباً للغلاف والفهرس
-    total_words = max(r["pages"] - 2, 3) * WORDS_PER_PAGE
-    intro_w = conc_w = int(total_words * 0.10)
-    abstract_w = min(250, int(total_words * 0.05))
-    refs_w = int(total_words * 0.07)
-    body_words = total_words - intro_w - conc_w - abstract_w - refs_w
+    sz = plan_sizes(r["pages"])
+    intro_w, conc_w, abstract_w, body_words = sz["intro"], sz["conc"], sz["abstract"], sz["body"]
 
     try:
         progress("إعداد خطة البحث")
-        outline = _outline(r, body_words, used)
+        outline = _outline(r, body_words, sz["chapters"], used)
         plan = _outline_text(outline)
         per_chapter = body_words // len(outline["chapters"])
 
@@ -135,7 +149,7 @@ def generate(r, progress=lambda msg: None) -> dict:
         progress("كتابة الخاتمة والمراجع")
         conclusion = _write(r, f"خطة البحث:\n{plan}\n\nاكتب خاتمة البحث في نحو {conc_w} كلمة، تحت عنوانين "
                                "### النتائج و### التوصيات، بنقاط واضحة مستخلصة من الفصول.", used)
-        references = _write(r, f"خطة البحث:\n{plan}\n\nاكتب قائمة المراجع للبحث بأسلوب APA (من 10 إلى 15 مرجعاً) "
+        references = _write(r, f"خطة البحث:\n{plan}\n\nاكتب قائمة المراجع للبحث بأسلوب APA ({sz['refs']} مراجع تقريباً) "
                                "مرتبة أبجدياً، كل مرجع في سطر يبدأ بـ \"- \". أدرج فقط مراجع حقيقية منشورة أنت "
                                "واثق من وجودها وبياناتها، ولا تضع أرقام DOI أو روابط إلا إذا كنت متأكداً منها تماماً. "
                                "اكتب القائمة فقط دون أي تعليق.", used)

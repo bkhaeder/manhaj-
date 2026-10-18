@@ -4,7 +4,7 @@ import re
 from datetime import date
 
 from docx import Document
-from docx.enum.text import WD_ALIGN_PARAGRAPH, WD_BREAK
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Pt, RGBColor, Cm
@@ -13,6 +13,7 @@ PPR_AFTER_BIDI = ("w:adjustRightInd", "w:snapToGrid", "w:spacing", "w:ind", "w:c
                   "w:mirrorIndents", "w:suppressOverlap", "w:jc", "w:textDirection", "w:textAlignment",
                   "w:textboxTightWrap", "w:outlineLvl", "w:divId", "w:cnfStyle", "w:rPr", "w:sectPr",
                   "w:pPrChange")
+ARABIC = re.compile(r"[\u0600-\u06FF]")
 # في الفقرات ثنائية الاتجاه (bidi) يفسّر Word المحاذاة "left" على أنها بداية السطر، أي اليمين في العربية
 START = WD_ALIGN_PARAGRAPH.LEFT
 RPR_AFTER_RTL = ("w:cs", "w:em", "w:lang", "w:eastAsianLayout", "w:specVanish", "w:oMath")
@@ -35,6 +36,7 @@ class Builder:
         self.L = LABELS["ar" if self.rtl else "en"]
         self.font = "Simplified Arabic" if self.rtl else "Times New Roman"
         self.doc = Document()
+        self._pending_break = False
         self._setup()
 
     # ---------- إعداد الصفحة والأنماط ----------
@@ -48,7 +50,7 @@ class Builder:
             sec._sectPr.append(bidi)
 
         base = 14 if self.rtl else 12
-        for name, size, bold in (("Normal", base, False), ("Title", 26, True),
+        for name, size, bold in (("Normal", base, False), ("Title", 22, True),
                                  ("Heading 1", base + 6, True), ("Heading 2", base + 3, True),
                                  ("Heading 3", base + 1, True), ("List Bullet", base, False),
                                  ("List Number", base, False)):
@@ -63,6 +65,9 @@ class Builder:
             fonts = rpr.get_or_add_rFonts()
             for attr in ("w:ascii", "w:hAnsi", "w:cs", "w:eastAsia"):
                 fonts.set(qn(attr), self.font)
+            # خطوط القالب (Theme) تتغلب على الخط المحدد، فنحذفها
+            for attr in ("w:asciiTheme", "w:hAnsiTheme", "w:eastAsiaTheme", "w:cstheme"):
+                fonts.attrib.pop(qn(attr), None)
             self._set_cs_size(rpr, size)
             if self.rtl:
                 self._add_rtl(rpr)
@@ -83,15 +88,20 @@ class Builder:
         sec.different_first_page_header_footer = True  # بلا رقم على الغلاف
 
     @staticmethod
-    def _add_bidi(ppr):
-        if ppr.find(qn("w:bidi")) is None:
+    def _add_bidi(ppr, on=True):
+        el = ppr.find(qn("w:bidi"))
+        if el is None:
             el = OxmlElement("w:bidi")
             ppr.insert_element_before(el, *PPR_AFTER_BIDI)
+        el.set(qn("w:val"), "1" if on else "0")
 
     @staticmethod
-    def _add_rtl(rpr):
-        if rpr.find(qn("w:rtl")) is None:
-            rpr.insert_element_before(OxmlElement("w:rtl"), *RPR_AFTER_RTL)
+    def _add_rtl(rpr, on=True):
+        el = rpr.find(qn("w:rtl"))
+        if el is None:
+            el = OxmlElement("w:rtl")
+            rpr.insert_element_before(el, *RPR_AFTER_RTL)
+        el.set(qn("w:val"), "1" if on else "0")
 
     @staticmethod
     def _set_cs_size(rpr, size):
@@ -114,15 +124,23 @@ class Builder:
             run._r.append(el)
 
     # ---------- إضافة المحتوى ----------
-    def _align(self, p, align=None):
+    def _is_rtl(self, text):
+        # في البحث العربي، السطر المكتوب بالإنجليزية فقط (مثل المراجع الأجنبية) يُكتب من اليسار لليمين
+        return self.rtl and (bool(ARABIC.search(text)) or not text.strip())
+
+    def _align(self, p, align=None, rtl=None):
         if self.rtl:
-            self._add_bidi(p._p.get_or_add_pPr())
+            self._add_bidi(p._p.get_or_add_pPr(), self.rtl if rtl is None else rtl)
         p.alignment = align if align is not None else WD_ALIGN_PARAGRAPH.JUSTIFY
+        if self._pending_break:
+            p.paragraph_format.page_break_before = True
+            self._pending_break = False
         return p
 
-    def _runs(self, p, text, bold=False, size=None):
+    def _runs(self, p, text, bold=False, size=None, rtl=None):
         # يدعم **نص غامق**
         for i, part in enumerate(re.split(r"\*\*(.+?)\*\*", text)):
+            part = re.sub(r"\*(.+?)\*", r"\1", part).replace("*", "")  # مائل Markdown نحذف علاماته
             if not part:
                 continue
             run = p.add_run(part)
@@ -132,12 +150,13 @@ class Builder:
                 run.font.size = Pt(size)
                 self._set_cs_size(run._r.get_or_add_rPr(), size)
             if self.rtl:
-                self._add_rtl(run._r.get_or_add_rPr())
+                self._add_rtl(run._r.get_or_add_rPr(), self.rtl if rtl is None else rtl)
 
     def para(self, text, style=None, align=None, bold=False, size=None):
         p = self.doc.add_paragraph(style=style)
-        self._align(p, align)
-        self._runs(p, text, bold, size)
+        rtl = self._is_rtl(text)
+        self._align(p, align, rtl)
+        self._runs(p, text, bold, size, rtl)
         return p
 
     def heading(self, text, level):
@@ -147,7 +166,8 @@ class Builder:
         return p
 
     def page_break(self):
-        self.doc.add_paragraph().add_run().add_break(WD_BREAK.PAGE)
+        # تُطبَّق على الفقرة التالية (page_break_before) حتى لا تظهر صفحة فارغة إذا امتلأت الصفحة تماماً
+        self._pending_break = True
 
     def markdown(self, md: str):
         for raw in md.splitlines():
@@ -172,16 +192,15 @@ class Builder:
         # الغلاف
         for line in (r["university"], r["college"], r["department"]):
             self.para(line, align=C, bold=True, size=16)
-        for _ in range(5):
+        for _ in range(2):
             self.doc.add_paragraph()
         self.para(research["title"], style="Title", align=C)
-        for _ in range(4):
+        for _ in range(2):
             self.doc.add_paragraph()
         self.para(f"{L['by']}: {r['student_name']}", align=C, bold=True, size=15)
         self.para(f"{L['spec']}: {r['specialization']}", align=C, size=14)
         self.para(f"{L['sup']}: {r['supervisor']}", align=C, bold=True, size=15)
-        for _ in range(3):
-            self.doc.add_paragraph()
+        self.doc.add_paragraph()
         y = date.today().year
         self.para(f"{L['year']} {y - 1}–{y}" if date.today().month < 9 else f"{L['year']} {y}–{y + 1}",
                   align=C, size=13)
@@ -202,7 +221,6 @@ class Builder:
 
         self.heading(L["abstract"], 1)
         self.markdown(research["abstract"])
-        self.page_break()
 
         self.heading(L["intro"], 1)
         self.markdown(research["introduction"])
@@ -212,7 +230,6 @@ class Builder:
             self.heading(chapter_label(i) + ch["title"], 1)
             self.markdown(ch["body"])
 
-        self.page_break()
         self.heading(L["conc"], 1)
         self.markdown(research["conclusion"])
 

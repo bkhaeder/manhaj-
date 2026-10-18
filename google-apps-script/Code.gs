@@ -20,16 +20,17 @@ const CONFIG = {
   GROQ_API_KEY: '',          // اختياري (احتياطي ومراجِع): https://console.groq.com/keys
   OPENROUTER_API_KEY: '',    // اختياري: https://openrouter.ai/keys
   ADMIN_EMAIL: '',           // فارغ = إيميل حسابك في Google
-  GEMINI_MODEL: 'gemini-2.5-flash',
+  // حصة Gemini المجانية نحو 20 طلباً يومياً لكل نموذج، فنجرب عدة نماذج بالترتيب
+  GEMINI_MODELS: ['gemini-flash-latest', 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-3-flash-preview'],
   GROQ_MODEL: 'llama-3.3-70b-versatile',
   OPENROUTER_MODEL: 'deepseek/deepseek-chat-v3.1:free',
-  REVIEW: true,              // مراجعة كل جزء بمحرك ثانٍ
+  REVIEW: false,             // مراجعة كل جزء بمحرك ثانٍ (تضاعف استهلاك الحصص المجانية)
   MIN_PAGES: 5,
   MAX_PAGES: 20,
 };
 // ===========================================================================
 
-const WORDS_PER_PAGE = 250;
+const WORDS_PER_PAGE = 155;  // مقيس فعلياً بخط Amiri 14 وتباعد 1.5 على صفحة A4
 const STEP_BUDGET_MS = 4 * 60 * 1000;   // حد التنفيذ في Apps Script 6 دقائق؛ نترك هامشاً
 const MAX_ATTEMPTS = 6;
 const COLS = ['id', 'created', 'status', 'student_name', 'email', 'university', 'college', 'department',
@@ -268,11 +269,16 @@ function processJobs() {
 }
 
 // ----------------------------- كتابة البحث -----------------------------
+/** يوزّع عدد الكلمات بحيث يقارب عدد صفحات الملف النهائي ما طلبه الطالب. */
 function sizes_(r) {
-  const total = Math.max(r.pages - 2, 3) * WORDS_PER_PAGE;
-  const s = { intro: Math.round(total * 0.10), conc: Math.round(total * 0.10),
-              abstract: Math.min(250, Math.round(total * 0.05)) };
-  s.body = total - s.intro - s.conc - s.abstract - Math.round(total * 0.07);
+  const chapters = r.pages <= 12 ? 2 : 3;
+  const refs = Math.max(5, Math.min(15, r.pages));
+  // الغلاف والمحتويات صفحتان، وكل فصل والمراجع تبدأ بصفحة جديدة، وكل 8 مراجع تشغل صفحة تقريباً
+  const contentPages = Math.max(r.pages - 2 - 0.4 * (chapters + 1) - refs / 8, 1.5);
+  const total = Math.round(contentPages * WORDS_PER_PAGE);
+  const s = { chapters: chapters, refs: refs, abstract: Math.max(60, Math.round(total * 0.08)),
+              intro: Math.round(total * 0.15), conc: Math.round(total * 0.12) };
+  s.body = total - s.abstract - s.intro - s.conc;
   return s;
 }
 
@@ -311,7 +317,7 @@ function runStep_(r, job) {
   };
 
   if (name === 'outline') {
-    const n = r.pages <= 12 ? 2 : 3;
+    const n = sz.chapters;
     const text = write('ضع خطة البحث: عنواناً نهائياً دقيقاً (حسّن العنوان المقترح إن لزم)، و' + n +
       ' فصول، لكل فصل 2 إلى 3 مباحث. لا تُدرج المقدمة أو الخاتمة أو المراجع ضمن الفصول.\n' +
       'أجب بكائن JSON فقط بهذا الشكل: {"title": "...", "chapters": [{"title": "...", "sections": ["...", "..."]}]}',
@@ -338,7 +344,7 @@ function runStep_(r, job) {
     job.parts.conclusion = write(P + 'اكتب خاتمة البحث في نحو ' + sz.conc + ' كلمة، تحت عنوانين ### النتائج و### التوصيات، ' +
       'بنقاط واضحة مستخلصة من الفصول.');
   } else if (name === 'references') {
-    job.parts.references = write(P + 'اكتب قائمة المراجع للبحث بأسلوب APA (من 10 إلى 15 مرجعاً) مرتبة أبجدياً، كل مرجع في سطر ' +
+    job.parts.references = write(P + 'اكتب قائمة المراجع للبحث بأسلوب APA (' + sz.refs + ' مراجع تقريباً) مرتبة أبجدياً، كل مرجع في سطر ' +
       'يبدأ بـ "- ". أدرج فقط مراجع حقيقية منشورة أنت واثق من وجودها وبياناتها، ولا تضع أرقام DOI أو روابط إلا إذا كنت ' +
       'متأكداً منها تماماً. اكتب القائمة فقط دون أي تعليق.');
   } else if (name === 'build') {
@@ -380,7 +386,11 @@ function parseOutline_(text) {
   const ok = d.title && d.chapters && d.chapters.length &&
     d.chapters.every(function (c) { return c.title && c.sections && c.sections.length; });
   if (!ok) throw new Error('خطة البحث غير مكتملة');
-  d.chapters = d.chapters.slice(0, 4).map(function (c) { return { title: c.title, sections: c.sections.slice(0, 4) }; });
+  // نحذف «الفصل الأول:» و«المبحث الأول:» من العناوين لأن المستند يضيف الترقيم بنفسه
+  const strip = function (t) { return String(t).replace(/^\s*(الفصل|المبحث|Chapter|Section)\s+[^:：\-–]{1,20}[:：\-–]\s*/i, '').trim(); };
+  d.chapters = d.chapters.slice(0, 4).map(function (c) {
+    return { title: strip(c.title), sections: c.sections.slice(0, 4).map(strip) };
+  });
   return d;
 }
 
@@ -398,19 +408,21 @@ function system_(r) {
     '- التوثيق داخل النص بأسلوب APA مثل (المؤلف، السنة).\n' +
     '- لا تخترع إحصائيات أو اقتباسات أو مصادر. استشهد فقط بمصادر حقيقية معروفة أنت واثق من وجودها.\n' +
     '- استخدم Markdown بسيطاً فقط: "### " لعناوين المباحث، و"- " للنقاط، و**نص** للتأكيد. لا جداول ولا أكواد.\n' +
+    '- التزم بعدد الكلمات المطلوب في كل جزء تقريباً ولا تتجاوزه.\n' +
     '- اكتب المحتوى مباشرة دون أي تمهيد أو تعليق موجّه للقارئ مثل "إليك..." أو "بالتأكيد".';
 }
 
 // ----------------------------- محركات الذكاء الاصطناعي -----------------------------
 function engines_() {
-  const all = [
-    { name: 'gemini', key: CONFIG.GEMINI_API_KEY, model: CONFIG.GEMINI_MODEL,
-      url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', extra: { reasoning_effort: 'low' } },
+  const all = CONFIG.GEMINI_MODELS.map(function (m) {
+    return { name: 'gemini:' + m, key: CONFIG.GEMINI_API_KEY, model: m,
+             url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', extra: { reasoning_effort: 'low' } };
+  }).concat([
     { name: 'groq', key: CONFIG.GROQ_API_KEY, model: CONFIG.GROQ_MODEL,
       url: 'https://api.groq.com/openai/v1/chat/completions', extra: {} },
     { name: 'openrouter', key: CONFIG.OPENROUTER_API_KEY, model: CONFIG.OPENROUTER_MODEL,
       url: 'https://openrouter.ai/api/v1/chat/completions', extra: {} },
-  ];
+  ]);
   return all.filter(function (e) { return e.key; });
 }
 
@@ -437,7 +449,14 @@ function callEngine_(system, prompt, opts) {
       });
       const code = resp.getResponseCode();
       if (code === 429 || code === 503) {
-        cache.put('cool_' + e.name, '1', 90);
+        // ننتظر المدة التي يطلبها المزوّد (قد تكون حتى تجدد الحصة اليومية)، بحد أقصى 6 ساعات
+        let wait = 90;
+        try {
+          let d = JSON.parse(resp.getContentText());
+          d = Array.isArray(d) ? d[0] : d;
+          (d.error.details || []).forEach(function (x) { if (x.retryDelay) wait = parseFloat(x.retryDelay); });
+        } catch (ignore) { /* نستخدم الافتراضي */ }
+        cache.put('cool_' + e.name, '1', Math.max(30, Math.min(21600, Math.round(wait))));
         throw new Error('HTTP ' + code + ' (تجاوز الحد المجاني مؤقتاً)');
       }
       if (code !== 200) throw new Error('HTTP ' + code + ': ' + resp.getContentText().slice(0, 200));
@@ -472,7 +491,7 @@ function buildDocs_(r, job) {
   body.setMarginTop(72).setMarginBottom(72).setMarginLeft(72).setMarginRight(72);
   const A = DocumentApp.Attribute, H = DocumentApp.HorizontalAlignment, PH = DocumentApp.ParagraphHeading;
 
-  function style(p, size, color, align) {
+  function style(p, size, color, align, dirRtl) {
     const s = {};
     s[A.FONT_FAMILY] = font;
     s[A.FONT_SIZE] = size;
@@ -480,21 +499,24 @@ function buildDocs_(r, job) {
     s[A.LINE_SPACING] = 1.5;
     s[A.SPACING_AFTER] = 6;
     p.setAttributes(s);
-    p.setLeftToRight(!rtl);
+    p.setLeftToRight(!(dirRtl === undefined ? rtl : dirRtl));
     p.setAlignment(align || H.JUSTIFY);
     return p;
   }
   function addText(p, text, bold) {
     String(text).split(/\*\*(.+?)\*\*/).forEach(function (part, i) {
+      part = part.replace(/\*(.+?)\*/g, '$1').replace(/\*/g, '');  // مائل Markdown نحذف علاماته
       if (part) p.appendText(part).setBold(!!bold || i % 2 === 1);
     });
     return p;
   }
+  // في البحث العربي، السطر المكتوب بالإنجليزية فقط (مثل المراجع الأجنبية) يُكتب من اليسار لليمين
+  function isRtl(text) { return rtl && (/[\u0600-\u06FF]/.test(text) || !String(text).trim()); }
   function para(text, opts) {
     opts = opts || {};
     const p = addText(body.appendParagraph(''), text, opts.bold);
     if (opts.heading) p.setHeading(opts.heading);
-    return style(p, opts.size || base, opts.color, opts.align);
+    return style(p, opts.size || base, opts.color, opts.align, isRtl(text));
   }
   function heading(text, level) {
     return para(text, { heading: level === 1 ? PH.HEADING1 : level === 2 ? PH.HEADING2 : PH.HEADING3,
@@ -534,14 +556,14 @@ function buildDocs_(r, job) {
   toc.forEach(function (t, i) { para((i + 1) + '. ' + t); });
   body.appendPageBreak();
 
-  heading(L.abstract, 1); markdown(job.parts.abstract); body.appendPageBreak();
+  heading(L.abstract, 1); markdown(job.parts.abstract);
   heading(L.intro, 1); markdown(job.parts.intro);
   job.outline.chapters.forEach(function (c, i) {
     body.appendPageBreak();
     heading(chapterLabel(i) + c.title, 1);
     c.sections.forEach(function (_, j) { markdown(job.parts['sec:' + i + ':' + j]); });
   });
-  body.appendPageBreak(); heading(L.conc, 1); markdown(job.parts.conclusion);
+  heading(L.conc, 1); markdown(job.parts.conclusion);
   body.appendPageBreak(); heading(L.refs, 1);
   String(job.parts.references || '').split('\n').forEach(function (line) {
     line = line.trim().replace(/^([-*•]|\d+[.)])\s+/, '');
