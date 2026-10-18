@@ -21,13 +21,24 @@ const CONFIG = {
   OPENROUTER_API_KEY: '',    // اختياري: https://openrouter.ai/keys
   ADMIN_EMAIL: '',           // فارغ = إيميل حسابك في Google
   // حصة Gemini المجانية نحو 20 طلباً يومياً لكل نموذج، فنجرب عدة نماذج بالترتيب
-  GEMINI_MODELS: ['gemini-flash-latest', 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-3-flash-preview'],
+  GEMINI_MODELS: ['gemini-flash-latest', 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-3-flash-preview',
+                  'gemini-flash-lite-latest', 'gemini-3.5-flash-lite'],  // الأخيران أخف وأقل جودة: احتياط أخير
   GROQ_MODEL: 'llama-3.3-70b-versatile',
   OPENROUTER_MODEL: 'deepseek/deepseek-chat-v3.1:free',
   REVIEW: false,             // مراجعة كل جزء بمحرك ثانٍ (تضاعف استهلاك الحصص المجانية)
   MIN_PAGES: 5,
   MAX_PAGES: 20,
   PRICE_IQD: 10000,          // سعر البحث بالدينار العراقي (يظهر في الواجهة والإيميلات)
+  PAYMENT_METHOD: 'كي كارد',
+  PAYMENT_ACCOUNT: '3001941925',
+  VERSE_PAGE: true,          // صفحة «بسم الله الرحمن الرحيم» والآية بعد الغلاف (في البحوث العربية)
+};
+
+const GOVERNORATES = {
+  'بغداد': 'Baghdad', 'البصرة': 'Basra', 'نينوى': 'Nineveh', 'أربيل': 'Erbil', 'السليمانية': 'Sulaymaniyah',
+  'دهوك': 'Duhok', 'حلبجة': 'Halabja', 'كركوك': 'Kirkuk', 'ديالى': 'Diyala', 'الأنبار': 'Anbar',
+  'صلاح الدين': 'Salah al-Din', 'بابل': 'Babylon', 'كربلاء': 'Karbala', 'النجف': 'Najaf', 'واسط': 'Wasit',
+  'القادسية': 'Al-Qadisiyah', 'ذي قار': 'Dhi Qar', 'ميسان': 'Maysan', 'المثنى': 'Al-Muthanna',
 };
 // ===========================================================================
 
@@ -35,18 +46,19 @@ const WORDS_PER_PAGE = 155;  // مقيس فعلياً بخط Amiri 14 وتباع
 const STEP_BUDGET_MS = 4 * 60 * 1000;   // حد التنفيذ في Apps Script 6 دقائق؛ نترك هامشاً
 const MAX_ATTEMPTS = 6;
 const COLS = ['id', 'created', 'status', 'student_name', 'email', 'university', 'college', 'department',
-              'specialization', 'supervisor', 'title', 'details', 'language', 'pages', 'engines', 'error', 'doc_url'];
+              'specialization', 'supervisor', 'title', 'details', 'language', 'pages', 'engines', 'error', 'doc_url',
+              'governorate'];  // عمود specialization قديم ويبقى فارغاً حتى لا تتغير أعمدة الجداول الموجودة
 const STATUS = { pending: 'بانتظار المراجعة', approved: 'تمت الموافقة', generating: 'جارٍ الإنشاء',
                  sent: 'أُرسل للطالب', rejected: 'مرفوض', failed: 'فشل' };
 const FIELDS = {
   student_name: ['الاسم', 120], email: ['البريد الإلكتروني', 200], university: ['الجامعة', 150],
-  college: ['الكلية', 150], department: ['القسم', 150], specialization: ['التخصص', 150],
+  college: ['الكلية', 150], department: ['القسم', 150], governorate: ['المحافظة', 40],
   supervisor: ['المشرف', 120], title: ['عنوان البحث', 300], details: ['تفاصيل البحث', 2000],
 };
 
 // ----------------------------- الإعداد والتخزين -----------------------------
 function setup() {
-  sheet_();
+  sheet_().getRange(1, 1, 1, COLS.length).setValues([COLS]);
   folder_();
   secret_();
   const url = ScriptApp.getService().getUrl();
@@ -152,6 +164,7 @@ function submitRequest(d) {
     r[k] = v;
   });
   if (r.email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(r.email)) errors.push('البريد الإلكتروني غير صحيح.');
+  if (r.governorate && !GOVERNORATES[r.governorate]) errors.push('اختر المحافظة من القائمة.');
   r.language = d.language === 'en' ? 'en' : 'ar';
   r.pages = parseInt(d.pages, 10);
   if (!(r.pages >= CONFIG.MIN_PAGES && r.pages <= CONFIG.MAX_PAGES)) {
@@ -177,7 +190,7 @@ function submitRequest(d) {
     mail_(r.email, 'استلمنا طلبك - منصة منهج',
       '<p>مرحباً ' + esc_(r.student_name) + '،</p><p>استلمنا طلبك لبحث بعنوان <b>«' + esc_(r.title) +
       '»</b> (رقم الطلب #' + id + '). سيُراجَع الطلب، وسيصلك إيميل بالنتيجة.</p>' +
-      '<p>سعر البحث: <b>' + CONFIG.PRICE_IQD.toLocaleString('en-US') + ' دينار عراقي</b>.</p>');
+      paymentHtml_(r));
   } catch (e) {
     console.error('تعذر إرسال الإيميل: ' + e);
   }
@@ -226,6 +239,15 @@ function nextJobId_() {
   return null;
 }
 
+/** هل فشلت كل المحركات بسبب الحصة المجانية فقط (وليس لخطأ آخر)؟ */
+function isQuotaError_(e) {
+  const msg = String(e && e.message || e);
+  if (msg.indexOf('فشلت كل المحركات') < 0) return false;
+  return msg.split(': ').slice(1).join(': ').split(' | ').every(function (part) {
+    return /تجاوز الحد|تهدئة/.test(part);
+  });
+}
+
 function processJobs() {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(5000)) return;
@@ -250,16 +272,23 @@ function processJobs() {
           if (f) f.setTrashed(true);
         }
       } catch (e) {
-        job.attempts = (job.attempts || 0) + 1;
+        // نفاد الحصة المجانية ليس فشلاً: ننتظر تجددها (حتى نحو 24 ساعة) بدل إلغاء البحث
+        const quota = isQuotaError_(e);
+        if (quota) job.waits = (job.waits || 0) + 1; else job.attempts = (job.attempts || 0) + 1;
         saveJob_(id, job);
-        console.warn('طلب #' + id + ' الخطوة ' + job.step + ' محاولة ' + job.attempts + ': ' + e);
-        if (job.attempts >= MAX_ATTEMPTS) {
+        console.warn('طلب #' + id + ' الخطوة ' + job.step + (quota ? ' انتظار الحصة ' + job.waits : ' محاولة ' + job.attempts) + ': ' + e);
+        if (quota && job.waits === 3) {
+          safeMail_(adminEmail_(), 'تأخير: طلب #' + id,
+            '<p>نفدت حصة الذكاء الاصطناعي المجانية مؤقتاً أثناء كتابة البحث #' + id + ' «' + esc_(r.title) + '».</p>' +
+            '<p>ستُكمل المنصة الكتابة تلقائياً عند تجدد الحصة، ولا تحتاج لفعل شيء.</p>');
+        }
+        if (job.attempts >= MAX_ATTEMPTS || job.waits >= 150) {
           setReq_(id, { status: 'failed', error: String(e).slice(0, 1500) });
           safeMail_(adminEmail_(), 'فشل: طلب #' + id,
             '<p>✗ فشل إنشاء البحث #' + id + ' «' + esc_(r.title) + '».</p><pre dir="ltr">' + esc_(String(e)) + '</pre>' +
             '<p>لإعادة المحاولة افتح رابط الموافقة من إيميل الطلب مرة أخرى.</p>');
         } else {
-          waitSeconds = 90;  // غالباً تجاوز الحد المجاني مؤقتاً
+          waitSeconds = quota ? Math.min(90 * job.waits, 600) : 90;
           break;
         }
       }
@@ -278,8 +307,8 @@ function sizes_(r) {
   // الغلاف والمحتويات صفحتان، وكل فصل والمراجع تبدأ بصفحة جديدة، وكل 8 مراجع تشغل صفحة تقريباً
   const contentPages = Math.max(r.pages - 2 - 0.4 * (chapters + 1) - refs / 8, 1.5);
   const total = Math.round(contentPages * WORDS_PER_PAGE);
-  const s = { chapters: chapters, refs: refs, abstract: Math.max(60, Math.round(total * 0.08)),
-              intro: Math.round(total * 0.15), conc: Math.round(total * 0.12) };
+  const s = { chapters: chapters, refs: refs, abstract: Math.max(80, Math.round(total * 0.08)),
+              intro: Math.max(150, Math.round(total * 0.18)), conc: Math.max(100, Math.round(total * 0.12)) };
   s.body = total - s.abstract - s.intro - s.conc;
   return s;
 }
@@ -307,6 +336,47 @@ function steps_(job) {
   return list.concat(['conclusion', 'references', 'build']);
 }
 
+// ----------------------------- فحص جودة كل جزء -----------------------------
+// إذا خالف النموذج المطلوب (مثلاً كتب فصلاً بدل قائمة المراجع) يُرفض الرد ويُطلب من نموذج آخر.
+function words_(t) { return String(t).split(/\s+/).filter(Boolean).length; }
+function checkLength_(t, target) {
+  if (words_(t) > Math.max(3 * target, target + 250)) throw new Error('الرد أطول بكثير من المطلوب');
+  if (words_(t) < 0.3 * target) throw new Error('الرد أقصر بكثير من المطلوب');
+}
+function checkHeadings_(min) {
+  return function (t) { if ((t.match(/^#{2,6}\s/gm) || []).length < min) throw new Error('الرد لا يتبع العناوين المطلوبة'); };
+}
+function cleanAbstract_(t) {
+  // نكتفي بما قبل سطر الكلمات المفتاحية وسطرها، ونحذف أي إضافات بعده
+  const lines = String(t).split('\n'), out = [];
+  for (let i = 0; i < lines.length; i++) {
+    out.push(lines[i]);
+    if (/الكلمات المفتاحية|Keywords/i.test(lines[i])) break;
+  }
+  return out.join('\n').trim();
+}
+function checkAbstract_(target) {
+  return function (t) {
+    const a = cleanAbstract_(t);
+    if (/^#/m.test(a)) throw new Error('المستخلص يحتوي عناوين');
+    checkLength_(a, target);
+  };
+}
+function cleanReferences_(t) {
+  // نُبقي عناوين المصادر والمراجع والبنود المرقمة فقط، ونحذف أي فقرات أخرى أقحمها النموذج
+  return String(t).split('\n').filter(function (l) {
+    const x = l.trim();
+    if (/^([-*•]|\d+[.)-])\s+/.test(x)) return /(19|20)\d\d|[١٢][٩٠][٠-٩][٠-٩]|n\.d\.|د\.ت/.test(x);
+    return /^#{1,6}\s/.test(x) && /المصادر|المراجع|References|Sources|Bibliography/i.test(x);
+  }).join('\n');
+}
+function checkReferences_(t) {
+  t = cleanReferences_(t);
+  const items = String(t).split('\n').filter(function (l) { return /^\s*([-*•]|\d+[.)-])\s+/.test(l); });
+  const dated = items.filter(function (l) { return /(19|20)\d\d|[١٢][٩٠][٠-٩][٠-٩]/.test(l); });
+  if (items.length < 4 || dated.length < 0.7 * items.length) throw new Error('قائمة المراجع غير صحيحة');
+}
+
 /** ينفذ خطوة واحدة؛ يعيد true عند انتهاء البحث وإرساله. */
 function runStep_(r, job) {
   const name = steps_(job)[job.step];
@@ -321,15 +391,27 @@ function runStep_(r, job) {
   if (name === 'outline') {
     const n = sz.chapters;
     const text = write('ضع خطة البحث: عنواناً نهائياً دقيقاً (حسّن العنوان المقترح إن لزم)، و' + n +
-      ' فصول، لكل فصل 2 إلى 3 مباحث. لا تُدرج المقدمة أو الخاتمة أو المراجع ضمن الفصول.\n' +
+      ' فصول، لكل فصل 2 إلى 3 مباحث. يكون الفصل الأول إطاراً نظرياً ومفاهيمياً، وتتدرج الفصول التالية نحو التحليل ' +
+      'والتطبيق أو الدراسات السابقة بحسب طلب الطالب. اجعل العناوين دقيقة وأكاديمية وقصيرة ومن دون ترقيم. ' +
+      'لا تُدرج المقدمة أو الخاتمة أو المراجع ضمن الفصول.\n' +
       'أجب بكائن JSON فقط بهذا الشكل: {"title": "...", "chapters": [{"title": "...", "sections": ["...", "..."]}]}',
       { json: true, validate: parseOutline_ });
     job.outline = parseOutline_(text);
   } else if (name === 'abstract') {
-    job.parts.abstract = write(P + 'اكتب ملخص البحث (Abstract) في نحو ' + sz.abstract + ' كلمة، فقرة أو فقرتين، دون عنوان.');
+    job.parts.abstract = write(P + 'اكتب مستخلص البحث في نحو ' + sz.abstract + ' كلمة في فقرة واحدة متماسكة دون عنوان: ' +
+      'موضوع البحث وأهميته، ثم هدفه، ثم منهجه، ثم أبرز ما توصل إليه. ثم اكتب في سطر مستقل: ' +
+      (r.language === 'ar' ? '**الكلمات المفتاحية:** ' : '**Keywords:** ') + 'تليها 4 إلى 6 كلمات مفتاحية مفصولة بفواصل.',
+      { validate: checkAbstract_(sz.abstract) });
+    job.parts.abstract = cleanAbstract_(job.parts.abstract);
   } else if (name === 'intro') {
-    job.parts.intro = write(P + 'اكتب مقدمة البحث في نحو ' + sz.intro + ' كلمة، تشمل: تمهيداً للموضوع، مشكلة البحث وأسئلته، ' +
-      'أهمية البحث، أهدافه، منهج البحث، وهيكل البحث. استخدم ### لكل عنصر منها.');
+    const parts = r.pages <= 10
+      ? 'مشكلة البحث، أهمية البحث، أهداف البحث، منهج البحث'
+      : 'مشكلة البحث (مع صياغة تساؤلاته)، أهمية البحث (النظرية والتطبيقية)، أهداف البحث، حدود البحث (الموضوعية، ' +
+        'والمكانية: ' + r.governorate + '، والزمانية: العام الدراسي الحالي)، منهج البحث، تحديد المصطلحات (مصطلحان أو ثلاثة لغةً واصطلاحاً)';
+    job.parts.intro = write(P + 'اكتب مقدمة البحث في نحو ' + sz.intro + ' كلمة: فقرة تمهيدية تعرض الموضوع وسياقه، ثم العناصر ' +
+      'الآتية بالترتيب، كل عنصر تحت عنوان فرعي ### مسبوق بالترتيب الوصفي (' +
+      (r.language === 'ar' ? 'أولاً: ، ثانياً: ، ...' : 'First: , Second: , ...') + '): ' + parts + '.',
+      { validate: function (t) { checkHeadings_(3)(t); checkLength_(t, sz.intro); } });
   } else if (name.indexOf('sec:') === 0) {
     const ij = name.split(':').slice(1).map(Number);
     const ch = job.outline.chapters[ij[0]];
@@ -337,18 +419,30 @@ function runStep_(r, job) {
     const words = Math.round(sz.body / nSec);
     const opening = ij[1] === 0 ? 'ابدأ بفقرة تمهيدية قصيرة للفصل، ثم ' : '';
     job.parts[name] = write(P + 'نكتب الآن الفصل ' + (ij[0] + 1) + ': «' + ch.title + '». ' + opening +
-      'اكتب المبحث «' + ch.sections[ij[1]] + '» في نحو ' + words + ' كلمة. ابدأ بسطر عنوانه: ### ' +
-      ch.sections[ij[1]] + '\nلا تكتب عنوان الفصل، ولا تكتب مباحث أخرى.');
+      'اكتب متن المبحث «' + ch.sections[ij[1]] + '» في نحو ' + words + ' كلمة. لا تكتب عنوان المبحث ولا عنوان الفصل ' +
+      '(سيُضافان تلقائياً)، وابدأ بالمتن مباشرة. يمكنك تقسيم المبحث إلى عناوين فرعية ### مسبوقة بالترتيب الوصفي ' +
+      '(أولاً، ثانياً...) إن احتاج ذلك. لا تكتب مباحث أخرى ولا خلاصة عامة للبحث.',
+      { validate: function (t) { checkLength_(t, words); } });
   } else if (name.indexOf('review:') === 0) {
     const key = name.slice(7);
     job.parts[key] = review_(r, job.parts[key], job);
   } else if (name === 'conclusion') {
-    job.parts.conclusion = write(P + 'اكتب خاتمة البحث في نحو ' + sz.conc + ' كلمة، تحت عنوانين ### النتائج و### التوصيات، ' +
-      'بنقاط واضحة مستخلصة من الفصول.');
+    const ar = r.language === 'ar';
+    const heads = ar ? ['### أولاً: الاستنتاجات', '### ثانياً: التوصيات', '### ثالثاً: المقترحات']
+                     : ['### First: Conclusions', '### Second: Recommendations', '### Third: Suggestions for Future Research'];
+    job.parts.conclusion = write(P + 'اكتب خاتمة البحث في نحو ' + sz.conc + ' كلمة تحت العناوين الآتية بالترتيب: ' +
+      (r.pages <= 10 ? heads.slice(0, 2) : heads).join(' ، ') + '. اكتب تحت كل عنوان نقاطاً مرقمة (1- ، 2- ...)، ' +
+      'كل نقطة جملة أو جملتان دقيقتان مستخلصتان مما ورد في الفصول، والتوصيات موجهة إلى جهات محددة.',
+      { validate: function (t) { checkHeadings_(2)(t); checkLength_(t, sz.conc); } });
   } else if (name === 'references') {
-    job.parts.references = write(P + 'اكتب قائمة المراجع للبحث بأسلوب APA (' + sz.refs + ' مراجع تقريباً) مرتبة أبجدياً، كل مرجع في سطر ' +
-      'يبدأ بـ "- ". أدرج فقط مراجع حقيقية منشورة أنت واثق من وجودها وبياناتها، ولا تضع أرقام DOI أو روابط إلا إذا كنت ' +
-      'متأكداً منها تماماً. اكتب القائمة فقط دون أي تعليق.');
+    job.parts.references = write(P + 'اكتب قائمة المصادر والمراجع بأسلوب APA (' + sz.refs + ' مراجع تقريباً)، ' +
+      (r.language === 'ar'
+        ? 'تحت عنوانين: ### أولاً: المصادر العربية ثم ### ثانياً: المصادر الأجنبية، كل قسم مرتب أبجدياً، '
+        : 'in one list ordered alphabetically by author, ') +
+      'كل مرجع في سطر يبدأ بـ "- ". تشمل المراجع التي وثّقتها في متن البحث. أدرج فقط مراجع حقيقية منشورة أنت واثق ' +
+      'من وجودها وبياناتها، ولا تضع أرقام DOI أو روابط إلا إذا كنت متأكداً منها تماماً. اكتب القائمة فقط دون أي تعليق.',
+      { validate: checkReferences_ });
+    job.parts.references = cleanReferences_(job.parts.references);
   } else if (name === 'build') {
     const files = buildDocs_(r, job);
     job.docUrl = files.url;
@@ -397,19 +491,22 @@ function parseOutline_(text) {
 }
 
 function system_(r) {
-  const lang = r.language === 'ar' ? 'العربية الفصحى' : 'English (academic)';
-  return 'أنت باحث أكاديمي خبير تكتب بحثاً جامعياً أصيلاً ومتكاملاً.\n\nبيانات البحث:\n' +
+  const ar = r.language === 'ar';
+  return 'أنت أستاذ جامعي وباحث أكاديمي متمرس في الجامعات العراقية، تكتب بحثاً جامعياً رصيناً وأصيلاً وفق الأعراف ' +
+    'المعتمدة في وزارة التعليم العالي والبحث العلمي العراقية.\n\nبيانات البحث:\n' +
     '- الجامعة: ' + r.university + ' / الكلية: ' + r.college + ' / القسم: ' + r.department + '\n' +
-    '- التخصص: ' + r.specialization + '\n- عنوان البحث المقترح: ' + r.title + '\n' +
+    '- المحافظة: ' + r.governorate + '\n- عنوان البحث المقترح: ' + r.title + '\n' +
     '- ما يريده الطالب في البحث:\n' + r.details + '\n\nقواعد الكتابة:\n' +
-    '- لغة البحث: ' + lang + '. اكتب كل المحتوى بهذه اللغة فقط.\n' +
-    '- أسلوب أكاديمي رصين، فقرات متماسكة ومترابطة، تحليل ونقاش ومقارنة لا مجرد سرد.\n' +
+    '- لغة البحث: ' + (ar ? 'العربية الفصحى' : 'English (formal academic)') + '. اكتب كل المحتوى بهذه اللغة فقط.\n' +
+    '- الرصانة: لغة علمية محكمة وموضوعية، بصيغة الغائب أو «يرى الباحث»، دون عبارات إنشائية أو مبالغات أو أحكام بلا دليل. ' +
+    'كل فقرة تبدأ بفكرة محورية ثم تدعمها بالتحليل والشواهد والتوثيق، وتربطها بما قبلها وما بعدها.\n' +
+    '- العمق: حلّل وقارن وانقد ووازن بين الآراء، واربط المفاهيم بواقع التخصص، ولا تكتفِ بالسرد أو التعداد.\n' +
     '- الأصالة: اكتب كل جملة بصياغتك الخاصة. لا تنسخ أي نص حرفياً من كتب أو مواقع أو أبحاث، ولا تستخدم العبارات ' +
     'الجاهزة المتداولة. عند عرض تعريف أو فكرة لباحث آخر أعد صياغتها كلياً بأسلوبك ثم وثّقها. الاقتباس الحرفي نادر جداً، ' +
     'وإن وُجد فبين علامات تنصيص مع التوثيق.\n' +
-    '- التوثيق داخل النص بأسلوب APA مثل (المؤلف، السنة).\n' +
+    '- التوثيق داخل النص بأسلوب APA مثل (المؤلف، السنة) أو (Author, Year)، بمعدل توثيق واحد على الأقل في كل فقرة نظرية.\n' +
     '- لا تخترع إحصائيات أو اقتباسات أو مصادر. استشهد فقط بمصادر حقيقية معروفة أنت واثق من وجودها.\n' +
-    '- استخدم Markdown بسيطاً فقط: "### " لعناوين المباحث، و"- " للنقاط، و**نص** للتأكيد. لا جداول ولا أكواد.\n' +
+    '- استخدم Markdown بسيطاً فقط: "### " للعناوين الفرعية، و"- " للنقاط، و**نص** للتأكيد. لا جداول ولا أكواد ولا عنوان رئيسي بـ "#".\n' +
     '- التزم بعدد الكلمات المطلوب في كل جزء تقريباً ولا تتجاوزه.\n' +
     '- اكتب المحتوى مباشرة دون أي تمهيد أو تعليق موجّه للقارئ مثل "إليك..." أو "بالتأكيد".';
 }
@@ -418,7 +515,7 @@ function system_(r) {
 function engines_() {
   const all = CONFIG.GEMINI_MODELS.map(function (m) {
     return { name: 'gemini:' + m, key: CONFIG.GEMINI_API_KEY, model: m,
-             url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', extra: { reasoning_effort: 'low' } };
+             url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', extra: { reasoning_effort: 'medium' } };
   }).concat([
     { name: 'groq', key: CONFIG.GROQ_API_KEY, model: CONFIG.GROQ_MODEL,
       url: 'https://api.groq.com/openai/v1/chat/completions', extra: {} },
@@ -476,29 +573,42 @@ function callEngine_(system, prompt, opts) {
 }
 
 // ----------------------------- بناء ملف Word و PDF -----------------------------
+function hijriYear_(d) {
+  // تقريب كافٍ للسنة الهجرية (السنة الهجرية أقصر بنحو 11 يوماً)
+  const g = d.getFullYear() + (d.getMonth() + d.getDate() / 31) / 12;
+  return Math.floor((g - 622.54) * 365.2422 / 354.367) + 1;
+}
+function arDigits_(s) { return String(s).replace(/\d/g, function (c) { return '٠١٢٣٤٥٦٧٨٩'[c]; }); }
+
 function buildDocs_(r, job) {
   const rtl = r.language === 'ar';
   const L = rtl
-    ? { by: 'إعداد الطالب', sup: 'إشراف', spec: 'التخصص', toc: 'المحتويات', abstract: 'الملخص', intro: 'المقدمة',
-        chapter: 'الفصل', conc: 'الخاتمة', refs: 'المصادر والمراجع', year: 'العام الدراسي',
-        ord: ['الأول', 'الثاني', 'الثالث', 'الرابع'] }
-    : { by: 'Prepared by', sup: 'Supervised by', spec: 'Specialization', toc: 'Contents', abstract: 'Abstract',
-        intro: 'Introduction', chapter: 'Chapter', conc: 'Conclusion', refs: 'References', year: 'Academic Year',
-        ord: ['One', 'Two', 'Three', 'Four'] };
+    ? { rep: 'جمهورية العراق', min: 'وزارة التعليم العالي والبحث العلمي', titled: 'بحث بعنوان',
+        submitted: 'بحث مقدَّم إلى ' + r.department + ' – ' + r.college + '، وهو جزء من متطلبات الدراسة',
+        by: 'إعداد الطالب', sup: 'بإشراف', toc: 'المحتويات', n: 'ت', topic: 'الموضوع', abstract: 'المستخلص',
+        intro: 'المقدمة', chapter: 'الفصل', section: 'المبحث', conc: 'الخاتمة', refs: 'المصادر والمراجع',
+        ord: ['الأول', 'الثاني', 'الثالث', 'الرابع', 'الخامس'] }
+    : { rep: 'Republic of Iraq', min: 'Ministry of Higher Education and Scientific Research', titled: 'A Research Paper Entitled',
+        submitted: 'Submitted to the ' + r.department + ', ' + r.college + ', as part of the study requirements',
+        by: 'Prepared by', sup: 'Supervised by', toc: 'Table of Contents', n: 'No.', topic: 'Subject', abstract: 'Abstract',
+        intro: 'Introduction', chapter: 'Chapter', section: 'Section', conc: 'Conclusion', refs: 'References',
+        ord: ['One', 'Two', 'Three', 'Four', 'Five'] };
   const font = rtl ? 'Amiri' : 'Times New Roman';
   const base = rtl ? 14 : 12;
   const title = job.outline.title;
   const doc = DocumentApp.create(r.id + '- ' + title);
   const body = doc.getBody();
-  body.setMarginTop(72).setMarginBottom(72).setMarginLeft(72).setMarginRight(72);
+  // هوامش 2.5 سم، و3 سم لجهة التجليد (اليمين في البحث العربي)
+  body.setMarginTop(71).setMarginBottom(71).setMarginLeft(rtl ? 71 : 85).setMarginRight(rtl ? 85 : 71);
   const A = DocumentApp.Attribute, H = DocumentApp.HorizontalAlignment, PH = DocumentApp.ParagraphHeading;
 
-  function style(p, size, color, align, dirRtl) {
+  function style(p, size, align, dirRtl, spacing) {
     const s = {};
     s[A.FONT_FAMILY] = font;
     s[A.FONT_SIZE] = size;
-    s[A.FOREGROUND_COLOR] = color || '#000000';
-    s[A.LINE_SPACING] = 1.5;
+    s[A.FOREGROUND_COLOR] = '#000000';
+    s[A.LINE_SPACING] = spacing || 1.5;
+    s[A.SPACING_BEFORE] = 0;
     s[A.SPACING_AFTER] = 6;
     p.setAttributes(s);
     p.setLeftToRight(!(dirRtl === undefined ? rtl : dirRtl));
@@ -513,63 +623,133 @@ function buildDocs_(r, job) {
     return p;
   }
   // في البحث العربي، السطر المكتوب بالإنجليزية فقط (مثل المراجع الأجنبية) يُكتب من اليسار لليمين
-  function isRtl(text) { return rtl && (/[\u0600-\u06FF]/.test(text) || !String(text).trim()); }
+  function isRtl(text) { return rtl && (/[؀-ۿ]/.test(text) || !String(text).trim()); }
   function para(text, opts) {
     opts = opts || {};
     const p = addText(body.appendParagraph(''), text, opts.bold);
     if (opts.heading) p.setHeading(opts.heading);
-    return style(p, opts.size || base, opts.color, opts.align, isRtl(text));
+    style(p, opts.size || base, opts.align, isRtl(text), opts.spacing);
+    if (opts.before) p.setSpacingBefore(opts.before);
+    return p;
   }
   function heading(text, level) {
     return para(text, { heading: level === 1 ? PH.HEADING1 : level === 2 ? PH.HEADING2 : PH.HEADING3,
-                        size: base + (level === 1 ? 6 : level === 2 ? 3 : 1), bold: true, color: '#1f3d36',
-                        align: level === 1 ? H.CENTER : H.JUSTIFY });
+                        size: base + (level === 1 ? 4 : level === 2 ? 2 : 0), bold: true,
+                        align: level === 1 ? H.CENTER : H.JUSTIFY, before: level === 1 ? 0 : 10 });
   }
-  function markdown(md) {
-    String(md || '').split('\n').forEach(function (raw) {
+  function blank(n, size) { for (let i = 0; i < n; i++) para('', { align: H.CENTER, size: size || 10, spacing: 1 }); }
+  function markdown(md, skipFirstHeading) {
+    String(md || '').split('\n').forEach(function (raw, idx) {
       const line = raw.trim();
       if (!line || line === '---' || line === '***') return;
       let m;
-      if ((m = line.match(/^(#{1,6})\s+(.*)$/))) heading(m[2].replace(/^\*+|\*+$/g, ''), Math.min(Math.max(m[1].length, 2), 3));
-      else if ((m = line.match(/^[-*•]\s+(.*)$/))) {
+      if ((m = line.match(/^(#{1,6})\s+(.*)$/))) {
+        if (skipFirstHeading && idx === 0) return;
+        heading(m[2].replace(/^\*+|\*+$/g, ''), 3);
+      } else if ((m = line.match(/^[-*•]\s+(.*)$/))) {
         const li = addText(body.appendListItem(''), m[1]).setGlyphType(DocumentApp.GlyphType.BULLET);
-        style(li, base);
+        style(li, base, H.JUSTIFY, isRtl(m[1]));
       } else para(line);
     });
   }
-  function chapterLabel(i) { return L.chapter + ' ' + (L.ord[i] || (i + 1)) + ': '; }
+  function chapterName(i) { return L.chapter + ' ' + (L.ord[i] || (i + 1)); }
+  function sectionName(i, j) { return rtl ? L.section + ' ' + (L.ord[j] || (j + 1)) : (i + 1) + '.' + (j + 1); }
 
-  // الغلاف
-  [r.university, r.college, r.department].forEach(function (t) { para(t, { align: H.CENTER, bold: true, size: 16 }); });
-  for (let i = 0; i < 5; i++) para('', { align: H.CENTER });
-  para(title, { align: H.CENTER, bold: true, size: 24, color: '#1f3d36' });
-  for (let i = 0; i < 4; i++) para('', { align: H.CENTER });
-  para(L.by + ': ' + r.student_name, { align: H.CENTER, bold: true, size: 15 });
-  para(L.spec + ': ' + r.specialization, { align: H.CENTER });
-  para(L.sup + ': ' + r.supervisor, { align: H.CENTER, bold: true, size: 15 });
-  for (let i = 0; i < 3; i++) para('', { align: H.CENTER });
-  const now = new Date(), y = now.getFullYear();
-  para(L.year + ' ' + (now.getMonth() < 8 ? (y - 1) + '–' + y : y + '–' + (y + 1)), { align: H.CENTER });
+  // ---------- الغلاف ----------
+  [L.rep, L.min, r.university, r.college, r.department].forEach(function (t, i) {
+    para(t, { align: H.CENTER, bold: true, size: i < 2 ? 15 : 14, spacing: 1 }).setSpacingAfter(2);
+  });
+  blank(3);
+  para(L.titled, { align: H.CENTER, size: base });
+  para(title, { align: H.CENTER, bold: true, size: rtl ? 22 : 20, spacing: 1.15 });
+  blank(1);
+  para(L.submitted, { align: H.CENTER, size: base - 1, spacing: 1.15 });
+  blank(2);
+  para(L.by, { align: H.CENTER, bold: true, size: base + 1, spacing: 1.15 });
+  para(r.student_name, { align: H.CENTER, size: base + 1, spacing: 1.15 });
+  blank(1);
+  para(L.sup, { align: H.CENTER, bold: true, size: base + 1, spacing: 1.15 });
+  para(r.supervisor, { align: H.CENTER, size: base + 1, spacing: 1.15 });
+  blank(2);
+  const now = new Date();
+  para(rtl ? r.governorate + '   ' + arDigits_(hijriYear_(now)) + 'هـ  –  ' + arDigits_(now.getFullYear()) + 'م'
+           : (GOVERNORATES[r.governorate] || r.governorate) + ' – ' + now.getFullYear(),
+       { align: H.CENTER, bold: true, size: base });
+
+  // ---------- صفحة البسملة والآية ----------
+  if (rtl && CONFIG.VERSE_PAGE) {
+    body.appendPageBreak();
+    blank(8);
+    para('بسم الله الرحمن الرحيم', { align: H.CENTER, bold: true, size: 20 });
+    blank(1);
+    para('﴿ وَقُل رَّبِّ زِدْنِي عِلْمًا ﴾', { align: H.CENTER, bold: true, size: 30 });
+    blank(1);
+    para('صدق الله العظيم', { align: H.CENTER, bold: true, size: 16 });
+    para('سورة طه: الآية ١١٤', { align: H.CENTER, size: 13 });
+  }
+
+  // ---------- المحتويات (جدول) ----------
   body.appendPageBreak();
-
-  // المحتويات
   heading(L.toc, 1);
-  const toc = [L.abstract, L.intro].concat(job.outline.chapters.map(function (c, i) { return chapterLabel(i) + c.title; }), [L.conc, L.refs]);
-  toc.forEach(function (t, i) { para((i + 1) + '. ' + t); });
-  body.appendPageBreak();
+  const rows = [[L.abstract, false], [L.intro, false]];
+  job.outline.chapters.forEach(function (c, i) {
+    rows.push([chapterName(i) + ': ' + c.title, false]);
+    c.sections.forEach(function (sec, j) { rows.push([sectionName(i, j) + ': ' + sec, true]); });
+  });
+  rows.push([L.conc, false], [L.refs, false]);
+  // في البحث العربي نعكس ترتيب الأعمدة ليظهر عمود التسلسل على اليمين
+  const cells = [[L.n, L.topic]].concat(rows.map(function (x, i) { return [rtl ? arDigits_(i + 1) : String(i + 1), x[0]]; }));
+  const table = body.appendTable(cells.map(function (c) { return rtl ? [c[1], c[0]] : c; }));
+  table.setBorderColor('#000000').setBorderWidth(0.75);
+  for (let i = 0; i < table.getNumRows(); i++) {
+    const row = table.getRow(i);
+    for (let j = 0; j < row.getNumCells(); j++) {
+      const cell = row.getCell(j).setPaddingTop(3).setPaddingBottom(3);
+      const isNum = (rtl ? j === 1 : j === 0);
+      if (i === 0) cell.setBackgroundColor('#e8ebf2');
+      const p = cell.getChild(0).asParagraph();
+      style(p, base - 1, isNum || i === 0 ? H.CENTER : H.JUSTIFY, rtl, 1.15);
+      p.setSpacingAfter(0);
+      if (i === 0 || (!isNum && !rows[i - 1][1])) p.editAsText().setBold(true);
+      if (!isNum && i > 0 && rows[i - 1][1]) p.setIndentStart(18);
+    }
+  }
+  table.setColumnWidth(rtl ? 1 : 0, 40);
 
-  heading(L.abstract, 1); markdown(job.parts.abstract);
-  heading(L.intro, 1); markdown(job.parts.intro);
+  // ---------- المستخلص والمقدمة ----------
+  body.appendPageBreak();
+  heading(L.abstract, 1);
+  markdown(job.parts.abstract);
+  body.appendPageBreak();
+  heading(L.intro, 1);
+  markdown(job.parts.intro);
+
+  // ---------- الفصول ----------
   job.outline.chapters.forEach(function (c, i) {
     body.appendPageBreak();
-    heading(chapterLabel(i) + c.title, 1);
-    c.sections.forEach(function (_, j) { markdown(job.parts['sec:' + i + ':' + j]); });
+    heading(chapterName(i), 1);
+    para(c.title, { align: H.CENTER, bold: true, size: base + 3, spacing: 1.3 });
+    c.sections.forEach(function (sec, j) {
+      heading(sectionName(i, j) + ': ' + sec, 2);
+      markdown(job.parts['sec:' + i + ':' + j], /^\s*#/.test(job.parts['sec:' + i + ':' + j] || '') &&
+        String(job.parts['sec:' + i + ':' + j]).split('\n')[0].indexOf(String(sec).slice(0, 12)) > -1);
+    });
   });
-  heading(L.conc, 1); markdown(job.parts.conclusion);
-  body.appendPageBreak(); heading(L.refs, 1);
+
+  // ---------- الخاتمة والمراجع ----------
+  body.appendPageBreak();
+  heading(L.conc, 1);
+  markdown(job.parts.conclusion);
+  body.appendPageBreak();
+  heading(L.refs, 1);
   String(job.parts.references || '').split('\n').forEach(function (line) {
-    line = line.trim().replace(/^([-*•]|\d+[.)])\s+/, '');
-    if (line) para(line).setIndentFirstLine(0).setIndentStart(36);
+    line = line.trim();
+    if (!line) return;
+    const h = line.match(/^#{1,6}\s+(.*)$/);
+    if (h) { heading(h[1], 3); return; }
+    line = line.replace(/^([-*•]|\d+[.)-])\s+/, '');
+    const p = para(line);
+    p.setIndentFirstLine(0).setIndentStart(28);  // تعليق بارز
   });
 
   // حذف الفقرة الفارغة الأولى التي ينشئها Google Docs
@@ -603,6 +783,15 @@ function safeMail_(to, subject, html) {
   try { mail_(to, subject, html); } catch (e) { console.error('تعذر إرسال الإيميل: ' + e); }
 }
 
+function paymentHtml_(r) {
+  return '<div style="background:#f5f7fb;border:1px solid #dfe3ec;border-radius:12px;padding:14px 16px;margin-top:14px">' +
+    '<b>طريقة الدفع</b><br>سعر البحث: <b>' + CONFIG.PRICE_IQD.toLocaleString('en-US') + ' دينار عراقي</b><br>' +
+    'حوّل المبلغ عبر <b>' + CONFIG.PAYMENT_METHOD + '</b> إلى الحساب رقم:<br>' +
+    '<span style="display:inline-block;font-size:22px;font-weight:bold;letter-spacing:2px;direction:ltr;margin:6px 0">' +
+    CONFIG.PAYMENT_ACCOUNT + '</span><br><b style="color:#c2412d">مهم:</b> اكتب اسمك (' + esc_(r.student_name) +
+    ') في ملاحظات التحويل حتى نتعرف على دفعتك.</div>';
+}
+
 function mailAdminNew_(r) {
   const row = function (k, v) {
     return '<tr><td style="padding:6px 10px;color:#666;white-space:nowrap">' + k + '</td><td style="padding:6px 10px">' + esc_(v) + '</td></tr>';
@@ -615,9 +804,11 @@ function mailAdminNew_(r) {
     '<p>وصل طلب بحث جديد رقم <b>#' + r.id + '</b>:</p>' +
     '<table style="border-collapse:collapse;width:100%;background:#faf8f3">' +
     row('الطالب', r.student_name) + row('البريد', r.email) + row('الجامعة', r.university) + row('الكلية', r.college) +
-    row('القسم', r.department) + row('التخصص', r.specialization) + row('المشرف', r.supervisor) + row('العنوان', r.title) +
+    row('القسم', r.department) + row('المحافظة', r.governorate) + row('المشرف', r.supervisor) + row('العنوان', r.title) +
     row('اللغة', r.language === 'ar' ? 'العربية' : 'الإنجليزية') + row('عدد الصفحات', r.pages) + '</table>' +
     '<p><b>تفاصيل الطالب:</b><br>' + esc_(r.details).replace(/\n/g, '<br>') + '</p>' +
+    '<p style="background:#fff8e6;border-radius:10px;padding:10px 14px">تحقق من وصول تحويل ' + CONFIG.PAYMENT_METHOD +
+    ' بمبلغ ' + CONFIG.PRICE_IQD.toLocaleString('en-US') + ' دينار باسم «' + esc_(r.student_name) + '» قبل الموافقة.</p>' +
     '<p style="text-align:center;margin-top:22px">' + btn(reviewUrl_(r.id, 'approve'), 'موافقة ✓', '#2e7d4f') +
     btn(reviewUrl_(r.id, 'reject'), 'رفض ✗', '#b23b3b') + '</p>');
 }
@@ -679,10 +870,10 @@ const CSS = '<link rel="preconnect" href="https://fonts.googleapis.com">' +
   '.step{display:none;animation:in .35s ease}.step.active{display:block}@keyframes in{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}' +
   '.grid{display:grid;grid-template-columns:1fr 1fr;gap:0 14px}.full{grid-column:1/-1}@media(max-width:560px){.grid{grid-template-columns:1fr}}' +
   '.f{display:block;margin-bottom:14px}.f>span{display:block;font-weight:500;font-size:.92rem;margin-bottom:6px}' +
-  'input,textarea{display:block;width:100%;font:inherit;font-size:16px;color:var(--ink);background:var(--field);border:1.5px solid var(--line);border-radius:12px;padding:12px 14px;transition:border-color .2s,box-shadow .2s}' +
+  'input,textarea,select{display:block;width:100%;font:inherit;font-size:16px;color:var(--ink);background:var(--field);border:1.5px solid var(--line);border-radius:12px;padding:12px 14px;transition:border-color .2s,box-shadow .2s}' +
   'textarea{resize:vertical;min-height:130px}input::placeholder,textarea::placeholder{color:var(--muted);opacity:.7}' +
-  'input:focus,textarea:focus{outline:none;border-color:var(--lapis);box-shadow:0 0 0 4px color-mix(in srgb,var(--lapis) 18%,transparent)}' +
-  '.f.bad input,.f.bad textarea{border-color:var(--err)}.f .msg{display:none;color:var(--err);font-size:.83rem;margin-top:4px}.f.bad .msg{display:block}' +
+  'select{appearance:auto;padding-block:11px}input:focus,textarea:focus,select:focus{outline:none;border-color:var(--lapis);box-shadow:0 0 0 4px color-mix(in srgb,var(--lapis) 18%,transparent)}' +
+  '.f.bad input,.f.bad textarea,.f.bad select{border-color:var(--err)}.f .msg{display:none;color:var(--err);font-size:.83rem;margin-top:4px}.f.bad .msg{display:block}' +
   '.hint{display:flex;justify-content:space-between;color:var(--muted);font-size:.8rem;margin-top:4px;font-variant-numeric:tabular-nums}' +
   '.seg{display:grid;grid-template-columns:1fr 1fr;gap:8px}.seg input{position:absolute;opacity:0;pointer-events:none}' +
   '.seg label span{display:block;text-align:center;padding:12px;border:1.5px solid var(--line);border-radius:12px;cursor:pointer;background:var(--field);font-weight:500;transition:all .2s}' +
@@ -708,6 +899,12 @@ const CSS = '<link rel="preconnect" href="https://fonts.googleapis.com">' +
   '.next{list-style:none;padding:0;margin:16px auto 0;max-width:30em;text-align:start;display:grid;gap:8px}.next li{background:var(--field);border-radius:12px;padding:10px 14px;font-size:.92rem}' +
   'footer{text-align:center;color:var(--muted);font-size:.82rem;padding-block:26px 34px}' +
   /* صفحة المراجعة للمدير */
+  '.pay{border:1.5px solid var(--line);border-radius:14px;padding:14px 16px;margin-bottom:14px;background:var(--field);text-align:start}' +
+  '.pay h3{font-family:var(--display);font-size:1.05rem;margin:0 0 6px;color:var(--lapis)}.pay p{margin:0 0 8px;font-size:.92rem}' +
+  '.acct{display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--card);border:1.5px dashed var(--turq);border-radius:12px;padding:8px 10px 8px 14px;margin-bottom:10px}' +
+  '.acct b{font-family:var(--display);font-size:1.5rem;letter-spacing:.12em;direction:ltr;font-variant-numeric:tabular-nums;user-select:all;min-width:0}' +
+  '.acct button{padding:8px 14px;font-size:.88rem;background:var(--turq);color:#fff;white-space:nowrap;flex:none}' +
+  '.must{background:color-mix(in srgb,var(--gold) 18%,var(--card));border-radius:10px;padding:8px 12px;font-size:.88rem;margin:0}' +
   '.admin-top{background:var(--lapis-deep);color:#fff;padding-block:14px}' +
   '.ok{background:var(--ok);color:#fff;flex:1}.danger{background:var(--err);color:#fff;flex:1}' +
   '</style>';
@@ -720,6 +917,10 @@ function shell_(content, hero) {
 
 function formPage_() {
   const price = CONFIG.PRICE_IQD.toLocaleString('en-US');
+  const payBox = '<div class="pay"><h3>الدفع عبر «' + CONFIG.PAYMENT_METHOD + '»</h3>' +
+    '<p>حوّل مبلغ <b>' + price + ' دينار</b> إلى رقم الحساب:</p>' +
+    '<div class="acct"><b class="acctno">' + CONFIG.PAYMENT_ACCOUNT + '</b><button type="button" class="copyacct">نسخ الرقم</button></div>' +
+    '<p class="must"><b>مهم:</b> اكتب اسمك الكامل في <b>ملاحظات التحويل</b> حتى نتعرف على دفعتك.</p></div>';
   const field = function (id, label, opts) {
     opts = opts || {};
     return '<label class="f' + (opts.full ? ' full' : '') + '" id="w-' + id + '"><span>' + label + '</span>' +
@@ -733,7 +934,7 @@ function formPage_() {
     '<div class="brand">' + LOGO + ' منصة منهج</div>' +
     '<h1>بحثك الأكاديمي كاملاً، <em>جاهز للتسليم</em></h1>' +
     '<p>أخبرنا بموضوعك وما تريده فيه، ويصلك البحث مكتوباً وفق المنهج العلمي بملفي Word وPDF على بريدك الإلكتروني.</p>' +
-    '<div class="price"><b>' + price + '</b><span>دينار عراقي</span><small>سعر البحث الواحد</small></div>' +
+    '<div class="price"><b>' + price + '</b><span>دينار عراقي</span><small>الدفع عبر ' + CONFIG.PAYMENT_METHOD + '</small></div>' +
     '<ul class="perks"><li>حتى ' + CONFIG.MAX_PAGES + ' صفحة</li><li>عربي أو إنجليزي</li><li>توثيق بأسلوب APA</li><li>Word + PDF</li></ul>' +
     '</div></header>';
   const body =
@@ -749,10 +950,12 @@ function formPage_() {
       field('email', 'بريدك الإلكتروني', { type: 'email', ph: 'name@gmail.com', ac: 'email', full: true, msg: 'اكتب بريداً صحيحاً، فعليه يصلك البحث' }) +
     '</div>' +
     '<div class="step" data-name="جامعتك"><div class="grid">' +
+      '<label class="f" id="w-governorate"><span>المحافظة</span><select id="governorate" name="governorate">' +
+      '<option value="">اختر محافظتك</option>' + Object.keys(GOVERNORATES).map(function (g) {
+        return '<option>' + g + '</option>'; }).join('') + '</select><span class="msg">اختر المحافظة</span></label>' +
       field('university', 'الجامعة', { ph: 'مثال: جامعة بغداد', ac: 'organization' }) +
       field('college', 'الكلية', { ph: 'مثال: كلية التربية' }) +
       field('department', 'القسم', { ph: 'مثال: قسم الحاسبات' }) +
-      field('specialization', 'التخصص', { ph: 'مثال: علوم الحاسوب' }) +
       field('supervisor', 'اسم المشرف', { ph: 'مثال: أ.م.د. سارة محمود', full: true }) +
     '</div></div>' +
     '<div class="step" data-name="بحثك">' +
@@ -770,7 +973,7 @@ function formPage_() {
     '</div>' +
     '<div class="step" data-name="راجع طلبك">' +
       '<dl class="sum" id="sum"></dl>' +
-      '<div class="total"><span>سعر البحث</span><b>' + price + ' د.ع</b></div>' +
+      '<div class="total"><span>سعر البحث</span><b>' + price + ' د.ع</b></div>' + payBox +
       '<p class="note">البحث نموذج مساعد لك؛ ننصحك بمراجعته والتحقق من مراجعه وتعديله وفق تعليمات قسمك ومشرفك قبل التسليم.</p>' +
       '<div class="alert" id="alert"></div>' +
     '</div>' +
@@ -778,8 +981,9 @@ function formPage_() {
     '<button type="submit" class="primary" id="next">التالي</button></div>' +
     '</form></div>' +
     '<div id="done" class="done" hidden>' + LOGO + '<h2>وصل طلبك!</h2><div>رقم طلبك</div><div class="order" id="oid"></div>' +
-    '<ul class="next"><li>أرسلنا تأكيداً إلى <b id="oem" dir="ltr"></b></li><li>نراجع طلبك ونرسل لك الرد على البريد نفسه.</li>' +
-    '<li>عند الموافقة يصلك البحث بملفي Word وPDF. سعر البحث ' + price + ' دينار عراقي.</li></ul>' +
+    payBox.replace('<h3>', '<h3>الخطوة التالية: ') +
+    '<ul class="next"><li>أرسلنا تأكيداً وتعليمات الدفع إلى <b id="oem" dir="ltr"></b></li>' +
+    '<li>بعد وصول التحويل نراجع طلبك ونبدأ كتابة البحث.</li><li>يصلك البحث على بريدك بملفي Word وPDF.</li></ul>' +
     '<p class="note" style="margin-top:14px">لا تجد رسالتنا؟ تفقّد مجلد الرسائل غير المرغوب فيها (Spam).</p>' +
     '<button type="button" class="ghost" id="again">طلب بحث آخر</button></div>' +
     '</section>';
@@ -790,11 +994,11 @@ function formPage_() {
 const CLIENT_JS = [
   'var KEY="manhaj-student",steps=[].slice.call(document.querySelectorAll(".step")),cur=0;',
   'var f=document.getElementById("f"),next=document.getElementById("next"),back=document.getElementById("back");',
-  'var REQ={0:["student_name","email"],1:["university","college","department","specialization","supervisor"],2:["title","details"]};',
-  'var LABELS={student_name:"الاسم",email:"البريد",university:"الجامعة",college:"الكلية",department:"القسم",specialization:"التخصص",supervisor:"المشرف",title:"العنوان",details:"التفاصيل"};',
+  'var REQ={0:["student_name","email"],1:["governorate","university","college","department","supervisor"],2:["title","details"]};',
+  'var LABELS={student_name:"الاسم",email:"البريد",university:"الجامعة",college:"الكلية",department:"القسم",governorate:"المحافظة",supervisor:"المشرف",title:"العنوان",details:"التفاصيل"};',
   'function $(id){return document.getElementById(id)}',
   'function store(){try{var d={};Object.keys(LABELS).forEach(function(k){d[k]=$(k).value});localStorage.setItem(KEY,JSON.stringify(d))}catch(e){}}',
-  'function load(){try{var d=JSON.parse(localStorage.getItem(KEY)||"null");if(!d)return;var any=false;["student_name","email","university","college","department","specialization","supervisor"].forEach(function(k){if(d[k]){$(k).value=d[k];any=true}});if(any)$("welcome").style.display="block"}catch(e){}}',
+  'function load(){try{var d=JSON.parse(localStorage.getItem(KEY)||"null");if(!d)return;var any=false;["student_name","email","governorate","university","college","department","supervisor"].forEach(function(k){if(d[k]){$(k).value=d[k];any=true}});if(any)$("welcome").style.display="block"}catch(e){}}',
   'function valid(k){var v=$(k).value.trim();if(!v)return false;if(k==="email")return /^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$/.test(v);return true}',
   'function check(i){var ok=true,first=null;(REQ[i]||[]).forEach(function(k){var good=valid(k);$("w-"+k).classList.toggle("bad",!good);if(!good&&!first)first=$(k);ok=ok&&good});if(first)first.focus();return ok}',
   'function show(i,scroll){cur=i;steps.forEach(function(s,j){s.classList.toggle("active",j===i)});',
@@ -806,10 +1010,14 @@ const CLIENT_JS = [
   ' if(scroll!==false)$("app").scrollIntoView({block:"start"})}',
   'function esc(s){return String(s).replace(/[&<>"]/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;","\\"":"&quot;"}[c]})}',
   'function summary(){var lang=f.language.value==="en"?"English":"العربية";var rows=[["الطالب",$("student_name").value],["البريد",$("email").value],',
-  ' ["الجامعة",[$("university").value,$("college").value,$("department").value].join(" / ")],["التخصص",$("specialization").value],["المشرف",$("supervisor").value],',
+  ' ["الجامعة",[$("university").value,$("college").value,$("department").value].join(" / ")],["المحافظة",$("governorate").value],["المشرف",$("supervisor").value],',
   ' ["العنوان",$("title").value],["اللغة",lang],["الصفحات",$("pages").value+" صفحة"],["التفاصيل",$("details").value]];',
   ' $("sum").innerHTML=rows.map(function(r){return "<dt>"+r[0]+"</dt><dd>"+esc(r[1].trim())+"</dd>"}).join("")}',
-  'Object.keys(LABELS).forEach(function(k){$(k).addEventListener("input",function(){if($("w-"+k).classList.contains("bad")&&valid(k))$("w-"+k).classList.remove("bad");store()})});',
+  'document.querySelectorAll(".copyacct").forEach(function(b){b.addEventListener("click",function(){var n=b.parentNode.querySelector(".acctno"),t=n.textContent;',
+  ' function ok(){b.textContent="تم النسخ ✓";setTimeout(function(){b.textContent="نسخ الرقم"},2000)}',
+  ' function sel(){var r=document.createRange();r.selectNodeContents(n);var s=getSelection();s.removeAllRanges();s.addRange(r);try{if(document.execCommand("copy")){ok();return}}catch(e){}b.textContent="انسخه يدوياً"}',
+  ' if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(t).then(ok,sel);else sel()})});',
+  'Object.keys(LABELS).forEach(function(k){$(k).addEventListener(k==="governorate"?"change":"input",function(){if($("w-"+k).classList.contains("bad")&&valid(k))$("w-"+k).classList.remove("bad");store()})});',
   '$("details").addEventListener("input",function(){$("cnt").textContent=this.value.length+" / "+this.maxLength});',
   '$("pages").addEventListener("input",function(){$("pv").textContent=this.value});',
   'f.addEventListener("keydown",function(e){if(e.key==="Enter"&&e.target.tagName==="INPUT"){e.preventDefault();var ins=[].slice.call(steps[cur].querySelectorAll("input:not([type=radio]):not([type=range])"));var k=ins.indexOf(e.target);if(k>-1&&k<ins.length-1)ins[k+1].focus();else next.click()}});',
@@ -836,9 +1044,11 @@ function reviewPage_(p) {
     ' الطلب #' + id + '</h2><span>' + esc_(STATUS[r.status] || r.status) + '</span></div><dl class="sum">' +
     '<dt>الطالب</dt><dd>' + esc_(r.student_name) + '</dd><dt>البريد</dt><dd dir="ltr" style="text-align:right">' + esc_(r.email) + '</dd>' +
     '<dt>الجامعة</dt><dd>' + esc_(r.university + ' / ' + r.college + ' / ' + r.department) + '</dd>' +
-    '<dt>التخصص</dt><dd>' + esc_(r.specialization) + '</dd><dt>المشرف</dt><dd>' + esc_(r.supervisor) + '</dd>' +
+    '<dt>المحافظة</dt><dd>' + esc_(r.governorate) + '</dd><dt>المشرف</dt><dd>' + esc_(r.supervisor) + '</dd>' +
     '<dt>العنوان</dt><dd>' + esc_(r.title) + '</dd><dt>اللغة</dt><dd>' + (r.language === 'ar' ? 'العربية' : 'English') + '</dd>' +
     '<dt>الصفحات</dt><dd>' + r.pages + '</dd><dt>التفاصيل</dt><dd>' + esc_(r.details) + '</dd></dl>' +
+    '<p class="must" style="margin-bottom:14px">تحقق من وصول تحويل ' + CONFIG.PAYMENT_METHOD + ' بمبلغ ' +
+    CONFIG.PRICE_IQD.toLocaleString('en-US') + ' دينار باسم «' + esc_(r.student_name) + '» قبل الموافقة.</p>' +
     '<div class="alert" id="msg"></div>' +
     (done ? '<p class="note">تمت معالجة هذا الطلب مسبقاً.</p>' :
       (a === 'reject' ? '<label class="f"><span>سبب الرفض (اختياري، يُرسل للطالب)</span><textarea id="reason" rows="3"></textarea></label>' +
