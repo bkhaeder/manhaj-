@@ -27,6 +27,7 @@ const CONFIG = {
   REVIEW: false,             // مراجعة كل جزء بمحرك ثانٍ (تضاعف استهلاك الحصص المجانية)
   MIN_PAGES: 5,
   MAX_PAGES: 20,
+  PRICE_IQD: 10000,          // سعر البحث بالدينار العراقي (يظهر في الواجهة والإيميلات)
 };
 // ===========================================================================
 
@@ -175,7 +176,8 @@ function submitRequest(d) {
     mailAdminNew_(r);
     mail_(r.email, 'استلمنا طلبك - منصة منهج',
       '<p>مرحباً ' + esc_(r.student_name) + '،</p><p>استلمنا طلبك لبحث بعنوان <b>«' + esc_(r.title) +
-      '»</b> (رقم الطلب #' + id + '). سيُراجَع الطلب، وسيصلك إيميل بالنتيجة.</p>');
+      '»</b> (رقم الطلب #' + id + '). سيُراجَع الطلب، وسيصلك إيميل بالنتيجة.</p>' +
+      '<p>سعر البحث: <b>' + CONFIG.PRICE_IQD.toLocaleString('en-US') + ' دينار عراقي</b>.</p>');
   } catch (e) {
     console.error('تعذر إرسال الإيميل: ' + e);
   }
@@ -587,9 +589,9 @@ function buildDocs_(r, job) {
 
 // ----------------------------- الإيميل -----------------------------
 function wrap_(body) {
-  return '<div dir="rtl" style="font-family:Tahoma,Arial,sans-serif;background:#f4f1ea;padding:24px">' +
-    '<div style="max-width:620px;margin:auto;background:#fff;border-radius:12px;overflow:hidden;border:1px solid #e3ddd0">' +
-    '<div style="background:#1f3d36;color:#fff;padding:18px 24px;font-size:20px;font-weight:bold">منصة منهج</div>' +
+  return '<div dir="rtl" style="font-family:Tahoma,Arial,sans-serif;background:#f5f7fb;padding:24px">' +
+    '<div style="max-width:620px;margin:auto;background:#fff;border-radius:16px;overflow:hidden;border:1px solid #dfe3ec">' +
+    '<div style="background:#1d3a8a;color:#fff;padding:18px 24px;font-size:20px;font-weight:bold;border-bottom:4px solid #17a398">✦ منصة منهج</div>' +
     '<div style="padding:24px;color:#222;line-height:1.9;font-size:15px">' + body + '</div></div></div>';
 }
 
@@ -627,81 +629,224 @@ function esc_(s) {
 }
 
 // ----------------------------- صفحات HTML -----------------------------
-const CSS = '<link href="https://fonts.googleapis.com/css2?family=Amiri:wght@700&family=IBM+Plex+Sans+Arabic:wght@400;500;600&display=swap" rel="stylesheet">' +
-  '<style>:root{--bg:#f4f1ea;--card:#fffdf8;--ink:#1d2422;--muted:#6b716e;--line:#e3ddd0;--brand:#1f3d36;--brand2:#2f5a4f;--gold:#b68a3a}' +
-  '@media (prefers-color-scheme:dark){:root{--bg:#141917;--card:#1c2321;--ink:#ece8df;--muted:#9aa29e;--line:#2d3633;--brand:#7fb8a6;--brand2:#9fcfbf;--gold:#d6ad5e}}' +
-  '*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font-family:"IBM Plex Sans Arabic",Tahoma,sans-serif;line-height:1.8}' +
-  '.top{padding:14px 16px;border-bottom:1px solid var(--line);font-family:Amiri,serif;font-size:1.5rem;color:var(--brand);font-weight:700}' +
-  '.mark{display:inline-grid;place-items:center;width:38px;height:38px;border-radius:10px;background:var(--brand);color:var(--bg);margin-left:6px}' +
-  '.wrap{max-width:760px;margin:0 auto;padding:24px 16px 40px}h1,h2{font-family:Amiri,serif;color:var(--brand);line-height:1.4}' +
-  'h1{font-size:2rem;margin:0 0 8px}h2{font-size:1.35rem;margin:26px 0 10px;padding-bottom:6px;border-bottom:2px solid var(--gold);display:inline-block}' +
-  '.sub{color:var(--muted);margin:0 0 20px}.card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:24px}' +
-  '.grid{display:grid;grid-template-columns:1fr 1fr;gap:0 16px}.full{grid-column:1/-1}@media(max-width:600px){.grid{grid-template-columns:1fr}.card{padding:18px}}' +
-  'label{display:block;margin-bottom:14px;font-weight:500}input,textarea{display:block;width:100%;margin-top:6px;padding:10px 12px;font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:10px}' +
-  'small{color:var(--muted);font-weight:400}.seg{display:flex;gap:8px;margin-top:6px}.seg label{flex:1;margin:0}.seg input{display:none}' +
-  '.seg span{display:block;text-align:center;padding:10px;border:1px solid var(--line);border-radius:10px;cursor:pointer;background:var(--bg)}' +
-  '.seg input:checked+span{background:var(--brand);color:var(--bg);border-color:var(--brand)}' +
-  'button{font:inherit;font-weight:600;border:0;border-radius:10px;padding:12px 28px;background:var(--brand);color:var(--bg);cursor:pointer;width:100%;margin-top:6px}' +
-  'button:disabled{opacity:.6}.ok{background:#2e7d4f;color:#fff}.danger{background:#b23b3b;color:#fff}' +
-  '.note{font-size:.9rem;color:var(--muted);border-right:3px solid var(--gold);padding-right:10px}' +
-  '.msg{border-radius:10px;padding:12px 16px;margin-bottom:16px}.err{background:#fbe9e7;color:#8a2a1f}.good{background:#e8f3ec;color:#1f5a3a}' +
-  'dl{display:grid;grid-template-columns:max-content 1fr;gap:6px 16px}dt{color:var(--muted)}dd{margin:0;white-space:pre-wrap}</style>';
+// الهوية: لازوردي بغدادي عميق + فيروزي، مع نجمة ثمانية من الزخرفة الإسلامية كعلامة ونقش خلفية خفيف.
+const STAR_PATH = 'M50 4 63 21 84 16 79 37 96 50 79 63 84 84 63 79 50 96 37 79 16 84 21 63 4 50 21 37 16 16 37 21Z';
+const LOGO = '<svg class="logo" viewBox="0 0 100 100" aria-hidden="true"><path d="' + STAR_PATH + '" fill="var(--lapis)"/>' +
+  '<path d="' + STAR_PATH + '" fill="none" stroke="var(--turq)" stroke-width="3" transform="translate(50 50) scale(.78) translate(-50 -50)"/>' +
+  '<circle cx="50" cy="50" r="9" fill="var(--turq)"/></svg>';
+const PATTERN = "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='56' height='56' viewBox='0 0 100 100'%3E%3Cpath d='" +
+  STAR_PATH.replace(/ /g, '%20') + "' fill='none' stroke='black' stroke-width='2.5'/%3E%3C/svg%3E\")";
 
-function shell_(content) {
+const CSS = '<link rel="preconnect" href="https://fonts.googleapis.com">' +
+  '<link href="https://fonts.googleapis.com/css2?family=Reem+Kufi:wght@500;700&family=Readex+Pro:wght@300;400;500;600&display=swap" rel="stylesheet">' +
+  '<style>' +
+  ':root{--lapis:#1d3a8a;--lapis-deep:#13275e;--turq:#17a398;--ink:#141b2d;--muted:#5b6478;--line:#dfe3ec;--bg:#f5f7fb;' +
+  '--card:#ffffff;--field:#f8f9fc;--on-lapis:#ffffff;--gold:#d9a521;--ok:#16825d;--err:#c2412d;--err-bg:#fdeeea;--pattern:#1d3a8a;' +
+  '--display:"Reem Kufi",Tahoma,sans-serif;--body:"Readex Pro",Tahoma,sans-serif}' +
+  '@media (prefers-color-scheme:dark){:root{--lapis:#5b7fe0;--lapis-deep:#0d1630;--turq:#3cc8bc;--ink:#e8ecf6;--muted:#9aa3b8;' +
+  '--line:#273152;--bg:#0b1122;--card:#121a33;--field:#0f1630;--on-lapis:#0b1122;--gold:#e9bb45;--ok:#45c48e;--err:#f08a74;' +
+  '--err-bg:#3a1c17;--pattern:#7f9cff;color-scheme:dark}}' +
+  '[hidden]{display:none!important}*{box-sizing:border-box}html{scroll-behavior:smooth}@media (prefers-reduced-motion:reduce){html{scroll-behavior:auto}*{transition:none!important;animation:none!important}}' +
+  'body{margin:0;background:var(--bg);color:var(--ink);font-family:var(--body);font-size:16px;line-height:1.75;-webkit-font-smoothing:antialiased}' +
+  'a{color:var(--lapis)}' +
+  '.wrap{max-width:720px;margin:0 auto;padding-inline:max(16px,env(safe-area-inset-left,0px))}' +
+  /* البطاقة العلوية */
+  '.hero{position:relative;overflow:hidden;background:linear-gradient(160deg,var(--lapis) 0%,var(--lapis-deep) 100%);color:#fff;padding-block:22px 64px}' +
+  '.hero::before{content:"";position:absolute;inset:0;background:#fff;opacity:.07;-webkit-mask:' + PATTERN + ';mask:' + PATTERN + '}' +
+  '.hero>*{position:relative}' +
+  '.brand{display:flex;align-items:center;gap:10px;font-family:var(--display);font-size:1.45rem;font-weight:700}' +
+  '.brand .logo{width:42px;height:42px;--lapis:#fff;--on-lapis:#13275e}' +
+  '.hero h1{font-family:var(--display);font-weight:700;font-size:clamp(1.8rem,6vw,2.6rem);line-height:1.35;margin:30px 0 10px;text-wrap:balance}' +
+  '.hero h1 em{font-style:normal;color:#7fe3d8}' +
+  '.hero p{margin:0;max-width:34em;color:#d6def5}' +
+  '.price{display:inline-flex;align-items:baseline;gap:8px;margin-top:22px;background:#fff;color:#13275e;border-radius:14px;padding:10px 18px;box-shadow:0 10px 30px rgba(0,0,0,.25)}' +
+  '.price b{font-family:var(--display);font-size:1.7rem;font-variant-numeric:tabular-nums;line-height:1}' +
+  '.price span{font-size:.95rem;font-weight:500}.price small{color:#5b6478;font-size:.82rem;margin-inline-start:4px}' +
+  '.perks{display:flex;flex-wrap:wrap;gap:8px;margin-top:18px;padding:0;list-style:none}' +
+  '.perks li{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.18);border-radius:99px;padding:4px 14px;font-size:.88rem}' +
+  /* خطوات العمل */
+  '.how{position:relative;z-index:1;display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:-38px 0 22px;padding:0;list-style:none;counter-reset:s}' +
+  '.how li{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;font-size:.88rem;color:var(--muted);counter-increment:s;min-width:0}' +
+  '.how li::before{content:counter(s);display:grid;place-items:center;width:28px;height:28px;border-radius:50%;background:var(--turq);color:#fff;font-weight:600;margin-bottom:6px;font-variant-numeric:tabular-nums}' +
+  '.how b{display:block;color:var(--ink);font-weight:600;font-size:.95rem}' +
+  '@media(max-width:520px){.how{grid-template-columns:1fr}.how li{display:flex;gap:12px;align-items:center}.how li::before{margin:0;flex:none}}' +
+  /* المعالج */
+  '.card{background:var(--card);border:1px solid var(--line);border-radius:20px;padding:22px;box-shadow:0 12px 40px rgba(20,27,45,.06)}' +
+  '.prog{display:flex;gap:6px;margin-bottom:6px}.prog i{flex:1;height:6px;border-radius:9px;background:var(--line);transition:background .3s}' +
+  '.prog i.on{background:var(--turq)}' +
+  '.stepname{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:14px}' +
+  '.stepname h2{font-family:var(--display);font-size:1.35rem;margin:0;color:var(--lapis)}.stepname span{color:var(--muted);font-size:.85rem;font-variant-numeric:tabular-nums}' +
+  '.step{display:none;animation:in .35s ease}.step.active{display:block}@keyframes in{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}' +
+  '.grid{display:grid;grid-template-columns:1fr 1fr;gap:0 14px}.full{grid-column:1/-1}@media(max-width:560px){.grid{grid-template-columns:1fr}}' +
+  '.f{display:block;margin-bottom:14px}.f>span{display:block;font-weight:500;font-size:.92rem;margin-bottom:6px}' +
+  'input,textarea{display:block;width:100%;font:inherit;font-size:16px;color:var(--ink);background:var(--field);border:1.5px solid var(--line);border-radius:12px;padding:12px 14px;transition:border-color .2s,box-shadow .2s}' +
+  'textarea{resize:vertical;min-height:130px}input::placeholder,textarea::placeholder{color:var(--muted);opacity:.7}' +
+  'input:focus,textarea:focus{outline:none;border-color:var(--lapis);box-shadow:0 0 0 4px color-mix(in srgb,var(--lapis) 18%,transparent)}' +
+  '.f.bad input,.f.bad textarea{border-color:var(--err)}.f .msg{display:none;color:var(--err);font-size:.83rem;margin-top:4px}.f.bad .msg{display:block}' +
+  '.hint{display:flex;justify-content:space-between;color:var(--muted);font-size:.8rem;margin-top:4px;font-variant-numeric:tabular-nums}' +
+  '.seg{display:grid;grid-template-columns:1fr 1fr;gap:8px}.seg input{position:absolute;opacity:0;pointer-events:none}' +
+  '.seg label span{display:block;text-align:center;padding:12px;border:1.5px solid var(--line);border-radius:12px;cursor:pointer;background:var(--field);font-weight:500;transition:all .2s}' +
+  '.seg input:checked+span{background:var(--lapis);border-color:var(--lapis);color:var(--on-lapis)}.seg input:focus-visible+span{box-shadow:0 0 0 4px color-mix(in srgb,var(--lapis) 25%,transparent)}' +
+  '.pages{display:flex;align-items:center;gap:14px}.pages output{font-family:var(--display);font-size:1.9rem;color:var(--lapis);min-width:2.4ch;text-align:center;font-variant-numeric:tabular-nums}' +
+  'input[type=range]{padding:0;border:0;background:none;accent-color:var(--turq);height:28px;box-shadow:none}' +
+  '.nav{display:flex;gap:10px;margin-top:8px}' +
+  'button{font:inherit;font-weight:600;border:0;border-radius:12px;padding:14px 22px;cursor:pointer;transition:transform .1s,filter .2s}' +
+  'button:active{transform:scale(.98)}button:focus-visible{outline:3px solid var(--turq);outline-offset:2px}' +
+  '.primary{flex:1;background:var(--lapis);color:var(--on-lapis)}.primary:hover{filter:brightness(1.08)}.ghost{background:transparent;color:var(--muted);border:1.5px solid var(--line)}' +
+  '.go{background:linear-gradient(135deg,var(--turq),var(--lapis));color:#fff;font-size:1.05rem}' +
+  'button[disabled]{opacity:.65;cursor:progress}' +
+  '.welcome{display:none;background:color-mix(in srgb,var(--turq) 12%,var(--card));border-radius:12px;padding:10px 14px;margin-bottom:14px;font-size:.9rem}' +
+  /* المراجعة */
+  '.sum{display:grid;grid-template-columns:max-content 1fr;gap:8px 16px;margin:0 0 16px;font-size:.93rem}.sum dt{color:var(--muted)}.sum dd{margin:0;min-width:0;overflow-wrap:anywhere;white-space:pre-wrap}' +
+  '.total{display:flex;justify-content:space-between;align-items:center;gap:10px;border-top:1.5px dashed var(--line);padding-top:14px;margin-bottom:14px}' +
+  '.total b{font-family:var(--display);font-size:1.5rem;color:var(--lapis);font-variant-numeric:tabular-nums}' +
+  '.note{font-size:.83rem;color:var(--muted);margin:0 0 14px}' +
+  '.alert{background:var(--err-bg);color:var(--err);border-radius:12px;padding:10px 14px;margin-bottom:14px;display:none}' +
+  /* النجاح */
+  '.done{text-align:center;padding-block:10px}.done .logo{width:84px;height:84px;animation:pop .6s cubic-bezier(.2,1.6,.4,1)}@keyframes pop{from{transform:scale(.4) rotate(-45deg)}to{transform:none}}' +
+  '.done h2{font-family:var(--display);color:var(--lapis);font-size:1.6rem;margin:12px 0 4px}.order{display:inline-block;font-family:var(--display);font-size:1.25rem;background:var(--field);border:1.5px solid var(--line);border-radius:12px;padding:6px 16px;margin:10px 0;font-variant-numeric:tabular-nums}' +
+  '.next{list-style:none;padding:0;margin:16px auto 0;max-width:30em;text-align:start;display:grid;gap:8px}.next li{background:var(--field);border-radius:12px;padding:10px 14px;font-size:.92rem}' +
+  'footer{text-align:center;color:var(--muted);font-size:.82rem;padding-block:26px 34px}' +
+  /* صفحة المراجعة للمدير */
+  '.admin-top{background:var(--lapis-deep);color:#fff;padding-block:14px}' +
+  '.ok{background:var(--ok);color:#fff;flex:1}.danger{background:var(--err);color:#fff;flex:1}' +
+  '</style>';
+
+function shell_(content, hero) {
   return '<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8">' + CSS + '</head><body>' +
-    '<div class="top"><span class="mark">م</span> منصة منهج</div><div class="wrap">' + content + '</div></body></html>';
+    (hero || '<header class="admin-top"><div class="wrap brand">' + LOGO + ' منصة منهج</div></header>') +
+    '<main class="wrap">' + content + '</main><footer>منصة منهج · بحوث أكاديمية منظمة وفق المنهج العلمي</footer></body></html>';
 }
 
 function formPage_() {
-  const f = function (name, label, extra) {
-    return '<label' + (extra && extra.full ? ' class="full"' : '') + '>' + label + '<input name="' + name + '" required' +
-      (extra && extra.type ? ' type="' + extra.type + '" dir="ltr"' : '') + '></label>';
+  const price = CONFIG.PRICE_IQD.toLocaleString('en-US');
+  const field = function (id, label, opts) {
+    opts = opts || {};
+    return '<label class="f' + (opts.full ? ' full' : '') + '" id="w-' + id + '"><span>' + label + '</span>' +
+      '<input id="' + id + '" name="' + id + '" autocomplete="' + (opts.ac || 'off') + '"' +
+      (opts.type ? ' type="' + opts.type + '" dir="ltr" inputmode="email"' : '') +
+      ' placeholder="' + (opts.ph || '') + '" maxlength="' + FIELDS[id][1] + '" enterkeyhint="next">' +
+      '<span class="msg">' + (opts.msg || 'هذا الحقل مطلوب') + '</span></label>';
   };
-  return shell_(
-    '<h1>اطلب بحثك الأكاديمي</h1><p class="sub">املأ بياناتك وصف ما تريده في البحث، وسيصلك البحث كاملاً بنسختين Word وPDF على بريدك الإلكتروني بعد مراجعة الطلب.</p>' +
-    '<div id="msg"></div><form id="f" class="card" onsubmit="send(event)">' +
-    '<h2>بيانات الطالب</h2><div class="grid">' + f('student_name', 'الاسم الكامل') + f('email', 'البريد الإلكتروني', { type: 'email' }) +
-    f('university', 'الجامعة') + f('college', 'الكلية') + f('department', 'القسم') + f('specialization', 'التخصص') +
-    f('supervisor', 'اسم المشرف', { full: true }) + '</div>' +
-    '<h2>تفاصيل البحث</h2>' + f('title', 'عنوان البحث') +
-    '<label>ماذا تريد داخل البحث؟<textarea name="details" rows="6" required maxlength="2000" placeholder="مثال: أريد التركيز على الجانب التطبيقي، مع دراسة حالة عن ...، وأن يتضمن فصلاً عن الدراسات السابقة..."></textarea></label>' +
-    '<div class="grid"><div><label style="margin:0">لغة البحث</label><div class="seg">' +
-    '<label><input type="radio" name="language" value="ar" checked><span>العربية</span></label>' +
-    '<label><input type="radio" name="language" value="en"><span>English</span></label></div></div>' +
-    '<label>عدد الصفحات<input name="pages" type="number" min="' + CONFIG.MIN_PAGES + '" max="' + CONFIG.MAX_PAGES + '" value="15" required>' +
-    '<small>من ' + CONFIG.MIN_PAGES + ' إلى ' + CONFIG.MAX_PAGES + ' صفحة</small></label></div>' +
-    '<p class="note">البحث المُرسل نموذج مساعد للطالب؛ يُنصح بمراجعته والتحقق من مصادره وتعديله وفق تعليمات القسم والمشرف قبل التسليم.</p>' +
-    '<button id="b">إرسال الطلب</button></form>' +
-    '<script>function send(e){e.preventDefault();var fm=document.getElementById("f"),b=document.getElementById("b"),m=document.getElementById("msg");' +
-    'var d={};new FormData(fm).forEach(function(v,k){d[k]=v});b.disabled=true;b.textContent="جارٍ الإرسال...";' +
-    'google.script.run.withSuccessHandler(function(r){b.disabled=false;b.textContent="إرسال الطلب";' +
-    'if(r.ok){fm.style.display="none";m.className="msg good";m.innerHTML="<b>تم استلام طلبك ✓</b><br>رقم طلبك #"+r.id+". سيصلك إيميل على "+r.email.replace(/</g,"")+" بعد مراجعة الطلب.";}' +
-    'else{m.className="msg err";m.innerHTML=r.errors.map(function(x){return "• "+x}).join("<br>");}scrollTo(0,0);})' +
-    '.withFailureHandler(function(err){b.disabled=false;b.textContent="إرسال الطلب";m.className="msg err";m.textContent="حدث خطأ، حاول مرة أخرى.";scrollTo(0,0);})' +
-    '.submitRequest(d);}</script>');
+  const hero =
+    '<header class="hero"><div class="wrap">' +
+    '<div class="brand">' + LOGO + ' منصة منهج</div>' +
+    '<h1>بحثك الأكاديمي كاملاً، <em>جاهز للتسليم</em></h1>' +
+    '<p>أخبرنا بموضوعك وما تريده فيه، ويصلك البحث مكتوباً وفق المنهج العلمي بملفي Word وPDF على بريدك الإلكتروني.</p>' +
+    '<div class="price"><b>' + price + '</b><span>دينار عراقي</span><small>سعر البحث الواحد</small></div>' +
+    '<ul class="perks"><li>حتى ' + CONFIG.MAX_PAGES + ' صفحة</li><li>عربي أو إنجليزي</li><li>توثيق بأسلوب APA</li><li>Word + PDF</li></ul>' +
+    '</div></header>';
+  const body =
+    '<ol class="how"><li><b>املأ الطلب</b>دقيقتان فقط</li><li><b>نراجع طلبك</b>ونرسل لك الرد</li><li><b>استلم بحثك</b>على بريدك الإلكتروني</li></ol>' +
+    '<section class="card" id="app">' +
+    '<div id="wizard">' +
+    '<div class="prog" aria-hidden="true"><i class="on"></i><i></i><i></i><i></i></div>' +
+    '<div class="stepname"><h2 id="sname">بياناتك</h2><span id="scount">الخطوة 1 من 4</span></div>' +
+    '<div class="welcome" id="welcome">أهلاً بعودتك! ملأنا بياناتك من طلبك السابق، راجعها وتابع.</div>' +
+    '<form id="f" novalidate>' +
+    '<div class="step active" data-name="بياناتك">' +
+      field('student_name', 'الاسم الكامل', { ph: 'كما تريده على غلاف البحث', ac: 'name', full: true }) +
+      field('email', 'بريدك الإلكتروني', { type: 'email', ph: 'name@gmail.com', ac: 'email', full: true, msg: 'اكتب بريداً صحيحاً، فعليه يصلك البحث' }) +
+    '</div>' +
+    '<div class="step" data-name="جامعتك"><div class="grid">' +
+      field('university', 'الجامعة', { ph: 'مثال: جامعة بغداد', ac: 'organization' }) +
+      field('college', 'الكلية', { ph: 'مثال: كلية التربية' }) +
+      field('department', 'القسم', { ph: 'مثال: قسم الحاسبات' }) +
+      field('specialization', 'التخصص', { ph: 'مثال: علوم الحاسوب' }) +
+      field('supervisor', 'اسم المشرف', { ph: 'مثال: أ.م.د. سارة محمود', full: true }) +
+    '</div></div>' +
+    '<div class="step" data-name="بحثك">' +
+      field('title', 'عنوان البحث', { ph: 'مثال: أثر التعلم الإلكتروني في التحصيل الدراسي', full: true }) +
+      '<label class="f" id="w-details"><span>ماذا تريد داخل البحث؟</span>' +
+      '<textarea id="details" name="details" maxlength="' + FIELDS.details[1] + '" placeholder="مثال: أريد فصلاً نظرياً عن المفهوم وأنواعه، وفصلاً تطبيقياً مع عرض دراسات سابقة..."></textarea>' +
+      '<div class="hint"><span>كلما كتبت تفاصيل أكثر جاء البحث أقرب لما تريد</span><span id="cnt">0 / ' + FIELDS.details[1] + '</span></div>' +
+      '<span class="msg">اكتب سطراً واحداً على الأقل عمّا تريده في البحث</span></label>' +
+      '<div class="f"><span>لغة البحث</span><div class="seg">' +
+      '<label><input type="radio" name="language" value="ar" checked><span>العربية</span></label>' +
+      '<label><input type="radio" name="language" value="en"><span>English</span></label></div></div>' +
+      '<div class="f"><span>عدد الصفحات</span><div class="pages"><output id="pv">15</output>' +
+      '<input type="range" id="pages" name="pages" min="' + CONFIG.MIN_PAGES + '" max="' + CONFIG.MAX_PAGES + '" value="15" aria-label="عدد الصفحات"></div>' +
+      '<div class="hint"><span>' + CONFIG.MIN_PAGES + ' صفحات</span><span>' + CONFIG.MAX_PAGES + ' صفحة</span></div></div>' +
+    '</div>' +
+    '<div class="step" data-name="راجع طلبك">' +
+      '<dl class="sum" id="sum"></dl>' +
+      '<div class="total"><span>سعر البحث</span><b>' + price + ' د.ع</b></div>' +
+      '<p class="note">البحث نموذج مساعد لك؛ ننصحك بمراجعته والتحقق من مراجعه وتعديله وفق تعليمات قسمك ومشرفك قبل التسليم.</p>' +
+      '<div class="alert" id="alert"></div>' +
+    '</div>' +
+    '<div class="nav"><button type="button" class="ghost" id="back" hidden>رجوع</button>' +
+    '<button type="submit" class="primary" id="next">التالي</button></div>' +
+    '</form></div>' +
+    '<div id="done" class="done" hidden>' + LOGO + '<h2>وصل طلبك!</h2><div>رقم طلبك</div><div class="order" id="oid"></div>' +
+    '<ul class="next"><li>أرسلنا تأكيداً إلى <b id="oem" dir="ltr"></b></li><li>نراجع طلبك ونرسل لك الرد على البريد نفسه.</li>' +
+    '<li>عند الموافقة يصلك البحث بملفي Word وPDF. سعر البحث ' + price + ' دينار عراقي.</li></ul>' +
+    '<p class="note" style="margin-top:14px">لا تجد رسالتنا؟ تفقّد مجلد الرسائل غير المرغوب فيها (Spam).</p>' +
+    '<button type="button" class="ghost" id="again">طلب بحث آخر</button></div>' +
+    '</section>';
+  return shell_(body, hero) + '<script>' + CLIENT_JS + '</script>';
 }
+
+// كود الواجهة في المتصفح: معالج من 4 خطوات، تحقق فوري، حفظ تلقائي للبيانات، وإرسال دون إعادة تحميل.
+const CLIENT_JS = [
+  'var KEY="manhaj-student",steps=[].slice.call(document.querySelectorAll(".step")),cur=0;',
+  'var f=document.getElementById("f"),next=document.getElementById("next"),back=document.getElementById("back");',
+  'var REQ={0:["student_name","email"],1:["university","college","department","specialization","supervisor"],2:["title","details"]};',
+  'var LABELS={student_name:"الاسم",email:"البريد",university:"الجامعة",college:"الكلية",department:"القسم",specialization:"التخصص",supervisor:"المشرف",title:"العنوان",details:"التفاصيل"};',
+  'function $(id){return document.getElementById(id)}',
+  'function store(){try{var d={};Object.keys(LABELS).forEach(function(k){d[k]=$(k).value});localStorage.setItem(KEY,JSON.stringify(d))}catch(e){}}',
+  'function load(){try{var d=JSON.parse(localStorage.getItem(KEY)||"null");if(!d)return;var any=false;["student_name","email","university","college","department","specialization","supervisor"].forEach(function(k){if(d[k]){$(k).value=d[k];any=true}});if(any)$("welcome").style.display="block"}catch(e){}}',
+  'function valid(k){var v=$(k).value.trim();if(!v)return false;if(k==="email")return /^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$/.test(v);return true}',
+  'function check(i){var ok=true,first=null;(REQ[i]||[]).forEach(function(k){var good=valid(k);$("w-"+k).classList.toggle("bad",!good);if(!good&&!first)first=$(k);ok=ok&&good});if(first)first.focus();return ok}',
+  'function show(i,scroll){cur=i;steps.forEach(function(s,j){s.classList.toggle("active",j===i)});',
+  ' document.querySelectorAll(".prog i").forEach(function(b,j){b.classList.toggle("on",j<=i)});',
+  ' $("sname").textContent=steps[i].getAttribute("data-name");$("scount").textContent="الخطوة "+(i+1)+" من "+steps.length;',
+  ' back.hidden=i===0;next.textContent=i===steps.length-1?"أرسل الطلب":"التالي";next.classList.toggle("go",i===steps.length-1);',
+  ' if(i===steps.length-1)summary();',
+  ' var inp=steps[i].querySelector("input,textarea");if(inp&&i<steps.length-1&&matchMedia("(min-width:600px)").matches)inp.focus();',
+  ' if(scroll!==false)$("app").scrollIntoView({block:"start"})}',
+  'function esc(s){return String(s).replace(/[&<>"]/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;","\\"":"&quot;"}[c]})}',
+  'function summary(){var lang=f.language.value==="en"?"English":"العربية";var rows=[["الطالب",$("student_name").value],["البريد",$("email").value],',
+  ' ["الجامعة",[$("university").value,$("college").value,$("department").value].join(" / ")],["التخصص",$("specialization").value],["المشرف",$("supervisor").value],',
+  ' ["العنوان",$("title").value],["اللغة",lang],["الصفحات",$("pages").value+" صفحة"],["التفاصيل",$("details").value]];',
+  ' $("sum").innerHTML=rows.map(function(r){return "<dt>"+r[0]+"</dt><dd>"+esc(r[1].trim())+"</dd>"}).join("")}',
+  'Object.keys(LABELS).forEach(function(k){$(k).addEventListener("input",function(){if($("w-"+k).classList.contains("bad")&&valid(k))$("w-"+k).classList.remove("bad");store()})});',
+  '$("details").addEventListener("input",function(){$("cnt").textContent=this.value.length+" / "+this.maxLength});',
+  '$("pages").addEventListener("input",function(){$("pv").textContent=this.value});',
+  'f.addEventListener("keydown",function(e){if(e.key==="Enter"&&e.target.tagName==="INPUT"){e.preventDefault();var ins=[].slice.call(steps[cur].querySelectorAll("input:not([type=radio]):not([type=range])"));var k=ins.indexOf(e.target);if(k>-1&&k<ins.length-1)ins[k+1].focus();else next.click()}});',
+  'back.addEventListener("click",function(){if(cur>0)show(cur-1)});',
+  'f.addEventListener("submit",function(e){e.preventDefault();if(cur<steps.length-1){if(check(cur))show(cur+1);return}',
+  ' var d={};new FormData(f).forEach(function(v,k){d[k]=v});next.disabled=true;back.disabled=true;next.textContent="جارٍ الإرسال…";$("alert").style.display="none";',
+  ' google.script.run.withSuccessHandler(function(r){next.disabled=false;back.disabled=false;',
+  '  if(r.ok){$("wizard").hidden=true;$("done").hidden=false;$("oid").textContent="#"+r.id;$("oem").textContent=r.email;$("app").scrollIntoView({block:"start"});return}',
+  '  $("alert").innerHTML=r.errors.map(esc).join("<br>");$("alert").style.display="block";next.textContent="أرسل الطلب"})',
+  ' .withFailureHandler(function(){next.disabled=false;back.disabled=false;next.textContent="أرسل الطلب";$("alert").textContent="تعذر الإرسال. تحقق من اتصالك بالإنترنت وحاول مرة أخرى.";$("alert").style.display="block"})',
+  ' .submitRequest(d)});',
+  '$("again").addEventListener("click",function(){$("title").value="";$("details").value="";$("cnt").textContent="0 / "+$("details").maxLength;$("done").hidden=true;$("wizard").hidden=false;show(2)});',
+  'load();show(0,false);',
+].join('\n');
 
 function reviewPage_(p) {
   const id = Number(p.id), a = p.a === 'reject' ? 'reject' : 'approve';
   const r = getReq_(id);
-  if (!r || p.sig !== sign_(id, a)) return shell_('<div class="card"><h1>رابط غير صالح</h1></div>');
+  if (!r || p.sig !== sign_(id, a)) return shell_('<section class="card" style="margin-top:22px"><h2>رابط غير صالح</h2></section>');
   const done = r.status !== 'pending' && r.status !== 'failed';
   const args = JSON.stringify([id, a, String(p.sig)]).slice(1, -1);
   return shell_(
-    '<div class="card"><h1>' + (a === 'approve' ? 'الموافقة على' : 'رفض') + ' الطلب #' + id + '</h1>' +
-    '<p>الحالة الحالية: <b>' + esc_(STATUS[r.status] || r.status) + '</b></p><dl>' +
-    '<dt>الطالب</dt><dd>' + esc_(r.student_name) + ' — ' + esc_(r.email) + '</dd>' +
+    '<section class="card" style="margin-top:22px"><div class="stepname"><h2>' + (a === 'approve' ? 'الموافقة على' : 'رفض') +
+    ' الطلب #' + id + '</h2><span>' + esc_(STATUS[r.status] || r.status) + '</span></div><dl class="sum">' +
+    '<dt>الطالب</dt><dd>' + esc_(r.student_name) + '</dd><dt>البريد</dt><dd dir="ltr" style="text-align:right">' + esc_(r.email) + '</dd>' +
     '<dt>الجامعة</dt><dd>' + esc_(r.university + ' / ' + r.college + ' / ' + r.department) + '</dd>' +
     '<dt>التخصص</dt><dd>' + esc_(r.specialization) + '</dd><dt>المشرف</dt><dd>' + esc_(r.supervisor) + '</dd>' +
-    '<dt>العنوان</dt><dd>' + esc_(r.title) + '</dd><dt>اللغة / الصفحات</dt><dd>' +
-    (r.language === 'ar' ? 'العربية' : 'English') + ' — ' + r.pages + ' صفحة</dd><dt>التفاصيل</dt><dd>' + esc_(r.details) + '</dd></dl>' +
-    '<div id="msg"></div>' +
+    '<dt>العنوان</dt><dd>' + esc_(r.title) + '</dd><dt>اللغة</dt><dd>' + (r.language === 'ar' ? 'العربية' : 'English') + '</dd>' +
+    '<dt>الصفحات</dt><dd>' + r.pages + '</dd><dt>التفاصيل</dt><dd>' + esc_(r.details) + '</dd></dl>' +
+    '<div class="alert" id="msg"></div>' +
     (done ? '<p class="note">تمت معالجة هذا الطلب مسبقاً.</p>' :
-      (a === 'reject' ? '<label>سبب الرفض (اختياري، يُرسل للطالب)<textarea id="reason" rows="3"></textarea></label>' +
-        '<button id="b" class="danger" onclick="go()">تأكيد الرفض</button>' :
-        '<button id="b" class="ok" onclick="go()">تأكيد الموافقة وبدء إنشاء البحث</button>')) +
-    '</div><script>function go(){var b=document.getElementById("b"),m=document.getElementById("msg"),r=document.getElementById("reason");' +
-    'b.disabled=true;google.script.run.withSuccessHandler(function(t){m.className="msg good";m.textContent=t;b.style.display="none";' +
-    'if(r)r.parentNode.style.display="none";}).withFailureHandler(function(e){b.disabled=false;m.className="msg err";m.textContent="حدث خطأ: "+e.message;})' +
+      (a === 'reject' ? '<label class="f"><span>سبب الرفض (اختياري، يُرسل للطالب)</span><textarea id="reason" rows="3"></textarea></label>' +
+        '<div class="nav"><button id="b" class="danger" onclick="go()">تأكيد الرفض</button></div>' :
+        '<div class="nav"><button id="b" class="ok" onclick="go()">تأكيد الموافقة وبدء كتابة البحث</button></div>')) +
+    '</section><script>function go(){var b=document.getElementById("b"),m=document.getElementById("msg"),r=document.getElementById("reason");' +
+    'b.disabled=true;b.textContent="جارٍ التنفيذ…";google.script.run.withSuccessHandler(function(t){m.style.display="block";m.style.background="transparent";' +
+    'm.style.color="var(--ok)";m.textContent=t;b.parentNode.style.display="none";if(r)r.parentNode.style.display="none";})' +
+    '.withFailureHandler(function(e){b.disabled=false;m.style.display="block";m.textContent="حدث خطأ: "+e.message;})' +
     '.reviewAction(' + args + ',r?r.value:"");}</script>');
 }
