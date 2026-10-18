@@ -15,10 +15,34 @@ mimetypes.add_type("application/vnd.openxmlformats-officedocument.wordprocessing
 
 
 def send(to: str, subject: str, html: str, attachments: list[str] = ()):
-    if config.MAIL_BACKEND == "brevo":
+    if config.MAIL_BACKEND == "gmail":
+        _send_gmail_script(to, subject, _wrap(html), attachments)
+    elif config.MAIL_BACKEND == "brevo":
         _send_brevo(to, subject, _wrap(html), attachments)
     else:
         _send_smtp(to, subject, _wrap(html), attachments)
+
+
+def _send_gmail_script(to, subject, html, attachments):
+    """يرسل عبر Google Apps Script (الملف deploy/gmail-relay.gs) المنشور من حساب Gmail الخاص بك."""
+    body = {
+        "secret": config.GMAIL_SCRIPT_SECRET,
+        "to": to,
+        "subject": subject,
+        "html": html,
+        "fromName": config.MAIL_FROM_NAME,
+        "attachments": [{"name": os.path.basename(p),
+                         "mimeType": mimetypes.guess_type(p)[0] or "application/octet-stream",
+                         "content": base64.b64encode(Path(p).read_bytes()).decode()} for p in attachments],
+    }
+    # Apps Script يعيد تحويلاً (302) إلى صفحة النتيجة؛ requests يتبعه تلقائياً
+    resp = requests.post(config.GMAIL_SCRIPT_URL, json=body, timeout=120)
+    try:
+        result = resp.json()
+    except ValueError:
+        raise RuntimeError(f"رد غير متوقع من Google Apps Script ({resp.status_code}): {resp.text[:200]}")
+    if not result.get("ok"):
+        raise RuntimeError(f"Google Apps Script: {result.get('error')}")
 
 
 def _send_brevo(to, subject, html, attachments):

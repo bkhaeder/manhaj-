@@ -12,9 +12,9 @@ services:
         sync: false
       - key: ADMIN_PASSWORD
         sync: false
-      - key: BREVO_API_KEY
+      - key: GMAIL_SCRIPT_URL
         sync: false
-      - key: MAIL_FROM
+      - key: GMAIL_SCRIPT_SECRET
         sync: false
       - key: GEMINI_API_KEY
         sync: false

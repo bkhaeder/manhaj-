@@ -16,7 +16,11 @@ SMTP_USER = os.environ.get("SMTP_USER", "")
 SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD", "")
 MAIL_FROM_NAME = os.environ.get("MAIL_FROM_NAME", "منصة منهج")
 # brevo: إرسال عبر HTTPS (مجاني ويعمل على الاستضافات المجانية التي تحجب SMTP) | smtp
-MAIL_BACKEND = os.environ.get("MAIL_BACKEND", "brevo" if os.environ.get("BREVO_API_KEY") else "smtp")
+# gmail: عبر Google Apps Script من حسابك في Gmail (مجاني، HTTPS) | brevo | smtp
+MAIL_BACKEND = os.environ.get("MAIL_BACKEND") or (
+    "gmail" if os.environ.get("GMAIL_SCRIPT_URL") else "brevo" if os.environ.get("BREVO_API_KEY") else "smtp")
+GMAIL_SCRIPT_URL = os.environ.get("GMAIL_SCRIPT_URL", "").strip()
+GMAIL_SCRIPT_SECRET = os.environ.get("GMAIL_SCRIPT_SECRET", "").strip()
 BREVO_API_KEY = os.environ.get("BREVO_API_KEY", "")
 MAIL_FROM = os.environ.get("MAIL_FROM", "") or SMTP_USER
 

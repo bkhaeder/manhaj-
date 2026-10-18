@@ -7,7 +7,7 @@
   <ul>
     <li>{{ '✓' if setup.engines else '✗' }} المحركات المفعّلة:
       {% for n, m in setup.engines %}<b>{{ n }}</b> <small dir="ltr">({{ m }})</small>{{ '، ' if not loop.last }}{% else %}<span class="err">لا يوجد. أضف GEMINI_API_KEY على الأقل</span>{% endfor %}</li>
-    <li>{{ '✓' if setup.mail_ok else '✗' }} الإيميل: {{ 'Brevo' if setup.mail == 'brevo' else 'SMTP' }}
+    <li>{{ '✓' if setup.mail_ok else '✗' }} الإيميل: {{ {'gmail': 'Gmail (Apps Script)', 'brevo': 'Brevo'}.get(setup.mail, 'SMTP') }}
       {% if not setup.mail_ok %}<span class="err">(الإعدادات ناقصة)</span>{% endif %}</li>
     <li>{{ '✓' if setup.admin_email else '✗' }} إيميل المدير: <span dir="ltr">{{ setup.admin_email or '—' }}</span></li>
     <li>رابط المنصة: <span dir="ltr">{{ setup.base_url }}</span></li>

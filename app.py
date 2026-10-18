@@ -173,8 +173,9 @@ def admin():
     setup = {
         "engines": [(p.name, p.model) for p in providers.enabled()],
         "mail": config.MAIL_BACKEND,
-        "mail_ok": bool(config.BREVO_API_KEY and config.MAIL_FROM) if config.MAIL_BACKEND == "brevo"
-                   else bool(config.SMTP_USER and config.SMTP_PASSWORD),
+        "mail_ok": {"gmail": bool(config.GMAIL_SCRIPT_URL and config.GMAIL_SCRIPT_SECRET),
+                    "brevo": bool(config.BREVO_API_KEY and config.MAIL_FROM)}.get(
+                        config.MAIL_BACKEND, bool(config.SMTP_USER and config.SMTP_PASSWORD)),
         "admin_email": config.ADMIN_EMAIL,
         "base_url": config.BASE_URL,
     }
