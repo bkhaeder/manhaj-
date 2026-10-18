@@ -2,7 +2,19 @@
 
 منصة يطلب منها الطلبة العراقيون بحوثاً أكاديمية. يملأ الطالب الطلب، ويصل المدير إيميل فيه زرّا موافقة ورفض. عند الموافقة تكتب نماذج Gemini البحث، ويُرسل للطالب بملفي Word وPDF.
 
-## النسخة المستخدمة فعلياً: `google-apps-script/Code.gs`
+## البنية الحالية
+- **واجهة الطالب:** `docs/index.html` على GitHub Pages (https://bkhaeder.github.io/manhaj-/). صفحة ثابتة سريعة بلا إطارات، تتصل بالخلفية عبر `fetch`، من خلال طبقة صغيرة تحاكي `google.script.run`.
+- **الخلفية:** `google-apps-script/Code.gs`، وفيها:
+  - `doPost`: واجهة برمجية لـ `submitRequest` و`trackRequest`، تستقبل JSON بنوع text/plain لتجنب طلب CORS المسبق.
+  - `doGet?api=config`: السعر والحساب وحدود الصفحات، والواجهة تحدّث المعروض منها في الخلفية.
+  - صفحات مراجعة المدير (روابط الإيميل).
+  - الرابط القديم لـ Apps Script يعرض صفحة «انتقلت المنصة» مع زر إلى الرابط الجديد.
+- **النشر:**
+  - `deploy-site.yml`: ينشر `docs/`، ويستبدل `__API_URL__` برابط `https://script.google.com/macros/s/<DEPLOYMENT_ID>/exec`.
+  - `deploy-apps-script.yml`: ينشر الخلفية بـ clasp.
+- **لتعديل تصميم الواجهة:** عدّل `docs/index.html` مباشرة، فواجهة الطالب لم تعد في Code.gs. أما CSS في Code.gs فيُستخدم لصفحات المدير فقط.
+
+## تفاصيل الخلفية: `google-apps-script/Code.gs`
 - ملف واحد يُلصق في script.google.com وينشر كتطبيق ويب. **أطلقها المالك ونجحت التجربة الحقيقية.**
 - التخزين: جدول «منصة منهج - الطلبات» في Drive (لوحة التحكم)، والبحوث وملفات `job-<id>.json` في مجلد «منصة منهج».
 - الكتابة تجري في الخلفية على خطوات عبر مشغّلات زمنية (`processJobs`)، لأن حد التنفيذ الواحد 6 دقائق.
@@ -31,7 +43,7 @@
 ### الاختبار (`google-apps-script/tests/`)
 - `node tests/sim.js Code.gs`: محاكاة كاملة لخدمات Google بردود وهمية (طلب، موافقة، كتابة، بناء، إيميلات، تتبع).
 - `GEMINI_API_KEY=... node tests/simreal.js Code.gs`: الدورة نفسها بنماذج Gemini حقيقية، وتستهلك من الحصة اليومية.
-- `node tests/ui-test.js <مجلد للصور>`: يفتح الواجهة في Chromium عبر Playwright ويضغط خطوات الطلب.
+- `node tests/site-test.js <مجلد للصور>`: يشغّل `docs/index.html` مع خادم وهمي يقلّد الخلفية، ويجرّب في Chromium الطلب والتتبع وتحديث السعر.
 - بعد أي تعديل شغّل `node --check` على نسخة ‎.js‎ من الملف، ثم `sim.js`.
 
 ### النشر التلقائي (GitHub ← Apps Script)

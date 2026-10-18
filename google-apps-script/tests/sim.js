@@ -24,6 +24,7 @@ const g={
   LockService:{getScriptLock:()=>({waitLock(){},tryLock:()=>true,releaseLock(){}})},
   CacheService:{getScriptCache:()=>({get:k=>cache[k]||null,put:(k,v)=>{cache[k]=v}})},
   MailApp:{sendEmail:o=>mails.push(o)},
+  ContentService:{MimeType:{JSON:'json'},createTextOutput:t=>({text:t,setMimeType(){return this}})},
   HtmlService:{XFrameOptionsMode:{ALLOWALL:1},createHtmlOutput:h=>({html:h,setTitle(){return this},addMetaTag(){return this},setXFrameOptionsMode(){return this}})},
   DocumentApp:{create:()=>{docLog=[];para('first');return{getBody:()=>body,saveAndClose(){},getId:()=>'DOC',getUrl:()=>'docurl'}},
     Attribute:{},HorizontalAlignment:{},ParagraphHeading:{HEADING1:1,HEADING2:2,HEADING3:3},GlyphType:{},ElementType:{PARAGRAPH:'P'}},
@@ -67,3 +68,12 @@ console.log('sample', docLog.filter(p=>p.text).slice(0,3).map(p=>p.text));
 console.log('track ok:', JSON.stringify(g.trackRequest('#1','S@x.com')));
 console.log('track bad:', JSON.stringify(g.trackRequest('1','other@x.com')));
 console.log('track ar digits:', g.trackRequest('١','s@x.com').ok);
+
+// واجهة doPost/doGet البرمجية (التي تستدعيها صفحة GitHub Pages)
+const post=(fn,args)=>JSON.parse(g.doPost({postData:{contents:JSON.stringify({fn,args})}}).text);
+console.log('api track:', JSON.stringify(post('trackRequest',['1','s@x.com'])).slice(0,60));
+console.log('api submit bad:', JSON.stringify(post('submitRequest',[{email:'x'}])).slice(0,70));
+console.log('api unknown:', JSON.stringify(post('setup',[])));
+console.log('api broken body:', g.doPost({postData:{contents:'{bad'}}).text);
+console.log('api config:', g.doGet({parameter:{api:'config'}}).text);
+console.log('moved page:', g.doGet({parameter:{}}).html.includes('github.io/manhaj-'));

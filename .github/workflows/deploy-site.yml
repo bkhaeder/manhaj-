@@ -1,0 +1,56 @@
+# ينشر واجهة الطالب (docs/) على GitHub Pages، ويربطها برابط الخلفية (Apps Script) تلقائياً.
+# يتطلب مرة واحدة: Settings ← Pages ← Source: GitHub Actions.
+# رابط الخلفية يُبنى من السر DEPLOYMENT_ID، أو من المتغير API_URL إن وُجد.
+name: Deploy student site
+on:
+  push:
+    branches: [main]
+    paths:
+      - docs/**
+      - .github/workflows/deploy-site.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build site
+        env:
+          DEPLOYMENT_ID: ${{ secrets.DEPLOYMENT_ID }}
+          API_URL: ${{ vars.API_URL }}
+        run: |
+          URL="$API_URL"
+          if [ -z "$URL" ]; then
+            ID="$(echo "$DEPLOYMENT_ID" | tr -d '[:space:]')"
+            if [ -z "$ID" ]; then
+              echo "::error::أضف السر DEPLOYMENT_ID (معرّف نشر Apps Script) أو المتغير API_URL في إعدادات المستودع."
+              exit 1
+            fi
+            URL="https://script.google.com/macros/s/$ID/exec"
+          fi
+          mkdir -p _site
+          cp -r docs/. _site/
+          sed -i "s|__API_URL__|$URL|g" _site/index.html
+          grep -q "__API_URL__" _site/index.html && { echo "::error::لم يُستبدل رابط الخلفية"; exit 1; } || true
+          touch _site/.nojekyll
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deployment
+        uses: actions/deploy-pages@v4

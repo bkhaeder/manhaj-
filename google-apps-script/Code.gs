@@ -35,7 +35,7 @@ const CONFIG = {
   PAYMENT_METHOD: 'كي كارد',
   PAYMENT_ACCOUNT: '3001941925',
   VERSE_PAGE: true,          // صفحة «بسم الله الرحمن الرحيم» والآية بعد الغلاف (في البحوث العربية)
-  PUBLIC_URL: '',            // رابط موقع Google Sites بعد تضمين المنصة فيه (يُستخدم في الإيميلات)
+  PUBLIC_URL: 'https://bkhaeder.github.io/manhaj-/',  // واجهة الطالب على GitHub Pages (مجلد docs في المستودع)
   DELIVERY_TEXT: 'خلال 24 ساعة من تأكيد التحويل',  // مدة التسليم كما تظهر للطالب
 };
 
@@ -157,12 +157,47 @@ function saveJob_(id, job) {
 // ----------------------------- واجهة الويب -----------------------------
 function doGet(e) {
   const p = (e && e.parameter) || {};
-  const html = (p.id && p.a && p.sig) ? reviewPage_(p) : formPage_(p.track);
+  if (p.api === 'config') return json_(publicConfig_());
+  const html = (p.id && p.a && p.sig) ? reviewPage_(p) : movedPage_();
   return HtmlService.createHtmlOutput(html)
     .setTitle('منصة منهج')
     .addMetaTag('viewport', 'width=device-width, initial-scale=1')
-    // يسمح بعرض المنصة داخل موقع Google Sites (فيختفي شريط تنبيه Google)
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+}
+
+/**
+ * واجهة برمجية لصفحة الطالب على GitHub Pages.
+ * الصفحة ترسل {fn, args} بنوع text/plain (فلا يحتاج المتصفح طلب CORS مسبقاً) وتستقبل JSON.
+ */
+const API_FUNCTIONS = { submitRequest: submitRequest, trackRequest: trackRequest };
+
+function doPost(e) {
+  try {
+    const body = JSON.parse((e && e.postData && e.postData.contents) || '{}');
+    const fn = API_FUNCTIONS[body.fn];
+    if (!fn) return json_({ serverError: 'طلب غير معروف' });
+    return json_(fn.apply(null, Array.isArray(body.args) ? body.args : []));
+  } catch (err) {
+    console.error('API: ' + err);
+    return json_({ serverError: 'حدث خطأ في الخادم، حاول مرة أخرى.' });
+  }
+}
+
+function json_(obj) {
+  return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
+}
+
+function publicConfig_() {
+  return { price: CONFIG.PRICE_IQD, method: CONFIG.PAYMENT_METHOD, account: CONFIG.PAYMENT_ACCOUNT,
+           minPages: CONFIG.MIN_PAGES, maxPages: CONFIG.MAX_PAGES, delivery: CONFIG.DELIVERY_TEXT };
+}
+
+/** الرابط القديم (رابط Apps Script) يدل الطالب على الواجهة الجديدة. */
+function movedPage_() {
+  return shell_('<section class="card" style="margin-top:22px;text-align:center"><div class="stepname" style="justify-content:center">' +
+    '<h2>انتقلت منصة منهج إلى رابط جديد أسرع</h2></div><p style="margin:0 0 18px;color:var(--muted)">اضغط الزر للمتابعة، واحفظ الرابط الجديد.</p>' +
+    '<div class="nav"><a class="primary" style="display:block;text-decoration:none;padding:14px;border-radius:12px;font-weight:600" target="_top" href="' +
+    esc_(publicUrl_()) + '">افتح منصة منهج</a></div><p class="note" style="margin-top:14px" dir="ltr">' + esc_(publicUrl_()) + '</p></section>');
 }
 
 function publicUrl_() { return CONFIG.PUBLIC_URL || ScriptApp.getService().getUrl(); }
@@ -230,7 +265,7 @@ function submitRequest(d) {
       '<p>مرحباً ' + esc_(r.student_name) + '،</p><p>استلمنا طلبك لبحث بعنوان <b>«' + esc_(r.title) +
       '»</b> (رقم الطلب #' + id + '). سيُراجَع الطلب، وسيصلك إيميل بالنتيجة.</p>' +
       paymentHtml_(r) + '<p style="margin-top:14px">تابع حالة طلبك في أي وقت من <a href="' + publicUrl_() +
-      '">صفحة المنصة</a> بالضغط على «تابع طلبك» وكتابة رقم الطلب <b>#' + id + '</b> وبريدك.</p>');
+      '?track=' + id + '">صفحة المنصة</a> بالضغط على «تابع طلبك» وكتابة رقم الطلب <b>#' + id + '</b> وبريدك.</p>');
   } catch (e) {
     console.error('تعذر إرسال الإيميل: ' + e);
   }
@@ -250,7 +285,7 @@ function reviewAction(id, action, sig, reason) {
     safeMail_(r.email, 'بدأنا كتابة بحثك - منصة منهج',
       '<p>مرحباً ' + esc_(r.student_name) + '،</p><p>تأكدنا من طلبك رقم <b>#' + id + '</b>، وبدأنا الآن كتابة بحثك بعنوان <b>«' +
       esc_(r.title) + '»</b>.</p><p>يصلك البحث عادةً خلال ساعة على هذا البريد بملفي Word وPDF. يمكنك متابعة تقدّم الكتابة من ' +
-      '<a href="' + publicUrl_() + '">صفحة المنصة</a> بالضغط على «تابع طلبك».</p>');
+      '<a href="' + publicUrl_() + '?track=' + id + '">صفحة متابعة الطلب</a>.</p>');
     return 'تمت الموافقة ✓ يجري الآن إنشاء البحث (عدة دقائق)، وسيُرسل للطالب تلقائياً وتصلك رسالة عند الانتهاء.';
   }
   if (action === 'reject') {
@@ -993,193 +1028,7 @@ function shell_(content, hero) {
     '<main class="wrap">' + content + '</main><footer>منصة منهج · بحوث أكاديمية منظمة وفق المنهج العلمي</footer></body></html>';
 }
 
-function samplePages_() {
-  const lines = function (n) { let h = ''; for (let i = 0; i < n; i++) h += '<p>' + SAMPLE_TEXT[i % SAMPLE_TEXT.length] + '</p>'; return h; };
-  return '<h2 class="sec-title" id="sample">هكذا يصلك بحثك</h2>' +
-    '<p class="sec-sub">غلاف رسمي وفق المعتمد في الجامعات العراقية، وفهرس، وفصول ومباحث منظمة</p>' +
-    '<div class="pages3">' +
-    '<figure class="pg" style="margin:0"><div class="paper"><div class="c b">جمهورية العراق</div><div class="c b">وزارة التعليم العالي والبحث العلمي</div>' +
-    '<div class="c b">جامعة بغداد</div><div class="c b">كلية التربية</div><div class="c b">قسم العلوم التربوية والنفسية</div>' +
-    '<div class="c" style="margin-top:2.2em">بحث بعنوان</div><div class="c t">أثر التعلم الإلكتروني في التحصيل الدراسي لطلبة الجامعة</div>' +
-    '<div class="c" style="font-size:.9em">بحث مقدَّم إلى قسم العلوم التربوية والنفسية – كلية التربية، وهو جزء من متطلبات الدراسة</div>' +
-    '<div class="sp"></div><div class="c b">إعداد الطالب</div><div class="c">أحمد علي حسن</div><div class="c b" style="margin-top:.8em">بإشراف</div>' +
-    '<div class="c">أ.م.د. سارة محمود</div><div class="sp"></div><div class="c b">بغداد ١٤٤٨هـ – ٢٠٢٦م</div></div><figcaption>الغلاف</figcaption></figure>' +
-    '<figure class="pg" style="margin:0"><div class="paper"><h5>المحتويات</h5><table>' +
-    [['ت', 'الموضوع'], ['١', 'المستخلص'], ['٢', 'المقدمة'], ['٣', 'الفصل الأول: الإطار النظري للتعلم الإلكتروني'],
-     ['٤', '&nbsp;&nbsp;المبحث الأول: المفهوم والنشأة'], ['٥', '&nbsp;&nbsp;المبحث الثاني: الأنماط والخصائص'],
-     ['٦', 'الفصل الثاني: أثره في التحصيل الدراسي'], ['٧', '&nbsp;&nbsp;المبحث الأول: انعكاساته على التحصيل'],
-     ['٨', '&nbsp;&nbsp;المبحث الثاني: الدراسات السابقة'], ['٩', 'الخاتمة'], ['١٠', 'المصادر والمراجع']].map(function (r) {
-      return '<tr><td>' + r[0] + '</td><td>' + r[1] + '</td></tr>'; }).join('') +
-    '</table></div><figcaption>المحتويات</figcaption></figure>' +
-    '<figure class="pg" style="margin:0"><div class="paper"><h5>الفصل الأول</h5><div class="c b" style="font-size:1.25em;margin-bottom:.8em">الإطار النظري للتعلم الإلكتروني</div>' +
-    '<h6>المبحث الأول: المفهوم والنشأة</h6>' + lines(6) + '</div><figcaption>من داخل البحث</figcaption></figure>' +
-    '</div>';
-}
-
-const SAMPLE_TEXT = [
-  'يمثّل التعلم الإلكتروني تحولاً جوهرياً في فلسفة التعليم الجامعي، إذ انتقل بالعملية التعليمية من حدود القاعة الدراسية إلى فضاء رقمي مفتوح يتيح للطالب الوصول إلى المعرفة في أي وقت (الزهراني، 2020).',
-  'ويرى الباحث أن هذا التحول لم يكن تقنياً فحسب، بل امتد ليعيد تشكيل أدوار كل من الأستاذ والطالب، فصار الأول ميسّراً للتعلم وصار الثاني شريكاً فاعلاً في بنائه.',
-  'وتتباين تعريفات التعلم الإلكتروني بتباين المنطلقات النظرية لأصحابها؛ فمنهم من ركّز على الوسيط التقني، ومنهم من ركّز على طبيعة التفاعل بين المتعلم والمحتوى (Garrison, 2017).',
-];
-
-function faq_(price) {
-  const q = [
-    ['كم يستغرق إعداد البحث؟', 'يصلك البحث ' + CONFIG.DELIVERY_TEXT + '، على البريد الإلكتروني الذي كتبته في الطلب.'],
-    ['كيف أدفع؟', 'حوّل ' + price + ' دينار عبر ' + CONFIG.PAYMENT_METHOD + ' إلى الحساب رقم ' + CONFIG.PAYMENT_ACCOUNT +
-      '، واكتب اسمك الكامل في ملاحظات التحويل حتى نتعرف على دفعتك.'],
-    ['ماذا أستلم بالضبط؟', 'ملفين: Word قابل للتعديل وPDF جاهز للطباعة. يتضمن البحث غلافاً رسمياً، وفهرساً، ومستخلصاً، ومقدمة، وفصولاً ومباحث، وخاتمة بالاستنتاجات والتوصيات، وقائمة مصادر.'],
-    ['هل يمكنني تعديل البحث بعد استلامه؟', 'نعم، نسخة Word قابلة للتعديل بالكامل، فيمكنك إضافة ما يطلبه مشرفك أو تغيير أي جزء.'],
-    ['هل البحث منقول من مصادر أخرى؟', 'لا، يُكتب كل بحث من جديد بصياغة خاصة به مع توثيق الأفكار بأسلوب APA. ننصحك بمراجعته والتحقق من المصادر قبل التسليم.'],
-    ['كيف أعرف ما حدث لطلبي؟', 'اضغط «تابع طلبك» في أعلى الصفحة، واكتب رقم طلبك وبريدك، فترى المرحلة التي وصل إليها.'],
-  ];
-  return '<h2 class="sec-title" id="faq">الأسئلة الشائعة</h2><p class="sec-sub">أجوبة مختصرة عن أكثر ما يسأل عنه الطلبة</p><div class="faq">' +
-    q.map(function (x) { return '<details><summary>' + x[0] + '</summary><p>' + x[1] + '</p></details>'; }).join('') + '</div>';
-}
-
-function formPage_(trackParam) {
-  const price = CONFIG.PRICE_IQD.toLocaleString('en-US');
-  const payBox = '<div class="pay"><h3>الدفع عبر «' + CONFIG.PAYMENT_METHOD + '»</h3>' +
-    '<p>حوّل مبلغ <b>' + price + ' دينار</b> إلى رقم الحساب:</p>' +
-    '<div class="acct"><b class="acctno">' + CONFIG.PAYMENT_ACCOUNT + '</b><button type="button" class="copyacct">نسخ الرقم</button></div>' +
-    '<p class="must"><b>مهم:</b> اكتب اسمك الكامل في <b>ملاحظات التحويل</b> حتى نتعرف على دفعتك.</p></div>';
-  const field = function (id, label, opts) {
-    opts = opts || {};
-    return '<label class="f' + (opts.full ? ' full' : '') + '" id="w-' + id + '"><span>' + label + '</span>' +
-      '<input id="' + id + '" name="' + id + '" autocomplete="' + (opts.ac || 'off') + '"' +
-      (opts.type ? ' type="' + opts.type + '" dir="ltr" inputmode="email"' : '') +
-      ' placeholder="' + (opts.ph || '') + '" maxlength="' + FIELDS[id][1] + '" enterkeyhint="next">' +
-      '<span class="msg">' + (opts.msg || 'هذا الحقل مطلوب') + '</span></label>';
-  };
-  const hero =
-    '<header class="hero"><div class="wrap">' +
-    '<div class="topbar"><div class="brand">' + LOGO + ' منصة منهج</div>' +
-    '<button type="button" class="topbtn" id="openTrack">تابع طلبك</button></div>' +
-    '<h1>بحثك الأكاديمي كاملاً، <em>جاهز للتسليم</em></h1>' +
-    '<p>أخبرنا بموضوعك وما تريده فيه، ويصلك البحث مكتوباً وفق المنهج العلمي بملفي Word وPDF على بريدك الإلكتروني.</p>' +
-    '<div class="price"><b>' + price + '</b><span>دينار عراقي</span><small>الدفع عبر ' + CONFIG.PAYMENT_METHOD + '</small></div>' +
-    '<ul class="perks"><li>حتى ' + CONFIG.MAX_PAGES + ' صفحة</li><li>عربي أو إنجليزي</li><li>توثيق بأسلوب APA</li><li>Word + PDF</li></ul>' +
-    '<div class="herolinks"><a href="#sample">شاهد نموذجاً من البحث</a><a href="#faq">الأسئلة الشائعة</a></div>' +
-    '</div></header>';
-  const body =
-    '<ol class="how"><li><b>املأ الطلب</b>دقيقتان فقط</li><li><b>نراجع طلبك</b>ونرسل لك الرد</li><li><b>استلم بحثك</b>على بريدك الإلكتروني</li></ol>' +
-    '<section class="card" id="track" hidden><div class="stepname"><h2>تابع طلبك</h2>' +
-    '<button type="button" class="ghost" id="closeTrack" style="padding:6px 14px">إغلاق</button></div>' +
-    '<form class="track-form" id="tf" novalidate>' +
-    '<label class="f"><span>رقم الطلب</span><input id="tid" inputmode="numeric" placeholder="مثال: 17" autocomplete="off"></label>' +
-    '<label class="f"><span>بريدك الإلكتروني</span><input id="tem" type="email" dir="ltr" placeholder="name@gmail.com" autocomplete="email"></label>' +
-    '<button type="submit" id="tbtn">عرض الحالة</button></form>' +
-    '<div class="alert" id="terr"></div><div id="tres"></div></section>' +
-    '<section class="card" id="app">' +
-    '<div id="wizard">' +
-    '<div class="prog" aria-hidden="true"><i class="on"></i><i></i><i></i><i></i></div>' +
-    '<div class="stepname"><h2 id="sname">بياناتك</h2><span id="scount">الخطوة 1 من 4</span></div>' +
-    '<div class="welcome" id="welcome">أهلاً بعودتك! ملأنا بياناتك من طلبك السابق، راجعها وتابع.</div>' +
-    '<form id="f" novalidate>' +
-    '<div class="step active" data-name="بياناتك">' +
-      field('student_name', 'الاسم الكامل', { ph: 'كما تريده على غلاف البحث', ac: 'name', full: true }) +
-      field('email', 'بريدك الإلكتروني', { type: 'email', ph: 'name@gmail.com', ac: 'email', full: true, msg: 'اكتب بريداً صحيحاً، فعليه يصلك البحث' }) +
-    '</div>' +
-    '<div class="step" data-name="جامعتك"><div class="grid">' +
-      '<label class="f" id="w-governorate"><span>المحافظة</span><select id="governorate" name="governorate">' +
-      '<option value="">اختر محافظتك</option>' + Object.keys(GOVERNORATES).map(function (g) {
-        return '<option>' + g + '</option>'; }).join('') + '</select><span class="msg">اختر المحافظة</span></label>' +
-      field('university', 'الجامعة', { ph: 'مثال: جامعة بغداد', ac: 'organization' }) +
-      field('college', 'الكلية', { ph: 'مثال: كلية التربية' }) +
-      field('department', 'القسم', { ph: 'مثال: قسم الحاسبات' }) +
-      field('supervisor', 'اسم المشرف', { ph: 'مثال: أ.م.د. سارة محمود', full: true }) +
-    '</div></div>' +
-    '<div class="step" data-name="بحثك">' +
-      field('title', 'عنوان البحث', { ph: 'مثال: أثر التعلم الإلكتروني في التحصيل الدراسي', full: true }) +
-      '<label class="f" id="w-details"><span>ماذا تريد داخل البحث؟</span>' +
-      '<textarea id="details" name="details" maxlength="' + FIELDS.details[1] + '" placeholder="مثال: أريد فصلاً نظرياً عن المفهوم وأنواعه، وفصلاً تطبيقياً مع عرض دراسات سابقة..."></textarea>' +
-      '<div class="hint"><span>كلما كتبت تفاصيل أكثر جاء البحث أقرب لما تريد</span><span id="cnt">0 / ' + FIELDS.details[1] + '</span></div>' +
-      '<span class="msg">اكتب سطراً واحداً على الأقل عمّا تريده في البحث</span></label>' +
-      '<div class="f"><span>لغة البحث</span><div class="seg">' +
-      '<label><input type="radio" name="language" value="ar" checked><span>العربية</span></label>' +
-      '<label><input type="radio" name="language" value="en"><span>English</span></label></div></div>' +
-      '<div class="f"><span>عدد الصفحات</span><div class="pages"><output id="pv">15</output>' +
-      '<input type="range" id="pages" name="pages" min="' + CONFIG.MIN_PAGES + '" max="' + CONFIG.MAX_PAGES + '" value="15" aria-label="عدد الصفحات"></div>' +
-      '<div class="hint"><span>' + CONFIG.MIN_PAGES + ' صفحات</span><span>' + CONFIG.MAX_PAGES + ' صفحة</span></div></div>' +
-    '</div>' +
-    '<div class="step" data-name="راجع طلبك">' +
-      '<dl class="sum" id="sum"></dl>' +
-      '<div class="total"><span>سعر البحث</span><b>' + price + ' د.ع</b></div>' + payBox +
-      '<p class="note">البحث نموذج مساعد لك؛ ننصحك بمراجعته والتحقق من مراجعه وتعديله وفق تعليمات قسمك ومشرفك قبل التسليم.</p>' +
-      '<div class="alert" id="alert"></div>' +
-    '</div>' +
-    '<div class="nav"><button type="button" class="ghost" id="back" hidden>رجوع</button>' +
-    '<button type="submit" class="primary" id="next">التالي</button></div>' +
-    '</form></div>' +
-    '<div id="done" class="done" hidden>' + LOGO + '<h2>وصل طلبك!</h2><div>رقم طلبك</div><div class="order" id="oid"></div>' +
-    payBox.replace('<h3>', '<h3>الخطوة التالية: ') +
-    '<ul class="next"><li>أرسلنا تأكيداً وتعليمات الدفع إلى <b id="oem" dir="ltr"></b></li>' +
-    '<li>بعد وصول التحويل نراجع طلبك ونبدأ كتابة البحث.</li><li>يصلك البحث على بريدك بملفي Word وPDF.</li></ul>' +
-    '<p class="note" style="margin-top:14px">لا تجد رسالتنا؟ تفقّد مجلد الرسائل غير المرغوب فيها (Spam).</p>' +
-    '<button type="button" class="ghost" id="again">طلب بحث آخر</button></div>' +
-    '</section>' + samplePages_() + faq_(price);
-  const trackId = String(trackParam || '').replace(/[^0-9]/g, '');
-  return shell_(body, hero) + '<script>var TRACK_ID="' + trackId + '";' + CLIENT_JS + '</script>';
-}
-
-// كود الواجهة في المتصفح: معالج من 4 خطوات، تحقق فوري، حفظ تلقائي للبيانات، وإرسال دون إعادة تحميل.
-const CLIENT_JS = [
-  'var KEY="manhaj-student",steps=[].slice.call(document.querySelectorAll(".step")),cur=0;',
-  'var f=document.getElementById("f"),next=document.getElementById("next"),back=document.getElementById("back");',
-  'var REQ={0:["student_name","email"],1:["governorate","university","college","department","supervisor"],2:["title","details"]};',
-  'var LABELS={student_name:"الاسم",email:"البريد",university:"الجامعة",college:"الكلية",department:"القسم",governorate:"المحافظة",supervisor:"المشرف",title:"العنوان",details:"التفاصيل"};',
-  'function $(id){return document.getElementById(id)}',
-  'function store(){try{var d={};Object.keys(LABELS).forEach(function(k){d[k]=$(k).value});localStorage.setItem(KEY,JSON.stringify(d))}catch(e){}}',
-  'function load(){try{var d=JSON.parse(localStorage.getItem(KEY)||"null");if(!d)return;var any=false;["student_name","email","governorate","university","college","department","supervisor"].forEach(function(k){if(d[k]){$(k).value=d[k];any=true}});if(any)$("welcome").style.display="block"}catch(e){}}',
-  'function valid(k){var v=$(k).value.trim();if(!v)return false;if(k==="email")return /^[^@\\s]+@[^@\\s]+\\.[^@\\s]+$/.test(v);return true}',
-  'function check(i){var ok=true,first=null;(REQ[i]||[]).forEach(function(k){var good=valid(k);$("w-"+k).classList.toggle("bad",!good);if(!good&&!first)first=$(k);ok=ok&&good});if(first)first.focus();return ok}',
-  'function show(i,scroll){cur=i;steps.forEach(function(s,j){s.classList.toggle("active",j===i)});',
-  ' document.querySelectorAll(".prog i").forEach(function(b,j){b.classList.toggle("on",j<=i)});',
-  ' $("sname").textContent=steps[i].getAttribute("data-name");$("scount").textContent="الخطوة "+(i+1)+" من "+steps.length;',
-  ' back.hidden=i===0;next.textContent=i===steps.length-1?"أرسل الطلب":"التالي";next.classList.toggle("go",i===steps.length-1);',
-  ' if(i===steps.length-1)summary();',
-  ' var inp=steps[i].querySelector("input,textarea");if(inp&&i<steps.length-1&&matchMedia("(min-width:600px)").matches)inp.focus();',
-  ' if(scroll!==false)$("app").scrollIntoView({block:"start"})}',
-  'function esc(s){return String(s).replace(/[&<>"]/g,function(c){return{"&":"&amp;","<":"&lt;",">":"&gt;","\\"":"&quot;"}[c]})}',
-  'function summary(){var lang=f.language.value==="en"?"English":"العربية";var rows=[["الطالب",$("student_name").value],["البريد",$("email").value],',
-  ' ["الجامعة",[$("university").value,$("college").value,$("department").value].join(" / ")],["المحافظة",$("governorate").value],["المشرف",$("supervisor").value],',
-  ' ["العنوان",$("title").value],["اللغة",lang],["الصفحات",$("pages").value+" صفحة"],["التفاصيل",$("details").value]];',
-  ' $("sum").innerHTML=rows.map(function(r){return "<dt>"+r[0]+"</dt><dd>"+esc(r[1].trim())+"</dd>"}).join("")}',
-  'document.querySelectorAll(".copyacct").forEach(function(b){b.addEventListener("click",function(){var n=b.parentNode.querySelector(".acctno"),t=n.textContent;',
-  ' function ok(){b.textContent="تم النسخ ✓";setTimeout(function(){b.textContent="نسخ الرقم"},2000)}',
-  ' function sel(){var r=document.createRange();r.selectNodeContents(n);var s=getSelection();s.removeAllRanges();s.addRange(r);try{if(document.execCommand("copy")){ok();return}}catch(e){}b.textContent="انسخه يدوياً"}',
-  ' if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(t).then(ok,sel);else sel()})});',
-  'Object.keys(LABELS).forEach(function(k){$(k).addEventListener(k==="governorate"?"change":"input",function(){if($("w-"+k).classList.contains("bad")&&valid(k))$("w-"+k).classList.remove("bad");store()})});',
-  '$("details").addEventListener("input",function(){$("cnt").textContent=this.value.length+" / "+this.maxLength});',
-  '$("pages").addEventListener("input",function(){$("pv").textContent=this.value});',
-  'f.addEventListener("keydown",function(e){if(e.key==="Enter"&&e.target.tagName==="INPUT"){e.preventDefault();var ins=[].slice.call(steps[cur].querySelectorAll("input:not([type=radio]):not([type=range])"));var k=ins.indexOf(e.target);if(k>-1&&k<ins.length-1)ins[k+1].focus();else next.click()}});',
-  'back.addEventListener("click",function(){if(cur>0)show(cur-1)});',
-  'f.addEventListener("submit",function(e){e.preventDefault();if(cur<steps.length-1){if(check(cur))show(cur+1);return}',
-  ' var d={};new FormData(f).forEach(function(v,k){d[k]=v});next.disabled=true;back.disabled=true;next.textContent="جارٍ الإرسال…";$("alert").style.display="none";',
-  ' google.script.run.withSuccessHandler(function(r){next.disabled=false;back.disabled=false;',
-  '  if(r.ok){try{localStorage.setItem(KEY+"-last",String(r.id))}catch(e){}$("wizard").hidden=true;$("done").hidden=false;$("oid").textContent="#"+r.id;$("oem").textContent=r.email;$("app").scrollIntoView({block:"start"});return}',
-  '  $("alert").innerHTML=r.errors.map(esc).join("<br>");$("alert").style.display="block";next.textContent="أرسل الطلب"})',
-  ' .withFailureHandler(function(){next.disabled=false;back.disabled=false;next.textContent="أرسل الطلب";$("alert").textContent="تعذر الإرسال. تحقق من اتصالك بالإنترنت وحاول مرة أخرى.";$("alert").style.display="block"})',
-  ' .submitRequest(d)});',
-  '$("again").addEventListener("click",function(){$("title").value="";$("details").value="";$("cnt").textContent="0 / "+$("details").maxLength;$("done").hidden=true;$("wizard").hidden=false;show(2)});',
-  'var STAGES=["استلمنا طلبك","التحقق من الدفع ومراجعة الطلب","كتابة البحث","أُرسل البحث إلى بريدك"];',
-  'function openTrack(){$("track").hidden=false;$("track").scrollIntoView({block:"start"});$("tid").focus()}',
-  '$("openTrack").addEventListener("click",openTrack);$("closeTrack").addEventListener("click",function(){$("track").hidden=true});',
-  'try{var em=JSON.parse(localStorage.getItem(KEY)||"{}").email;if(em)$("tem").value=em;var last=localStorage.getItem(KEY+"-last");if(last&&!TRACK_ID)$("tid").value=last}catch(e){}',
-  '$("tf").addEventListener("submit",function(e){e.preventDefault();var b=$("tbtn");if(!$("tid").value.trim()||!valid("tem")){$("terr").textContent="اكتب رقم الطلب وبريدك الإلكتروني.";$("terr").style.display="block";return}',
-  ' b.disabled=true;b.textContent="جارٍ البحث…";$("terr").style.display="none";',
-  ' google.script.run.withSuccessHandler(function(r){b.disabled=false;b.textContent="عرض الحالة";if(!r.ok){$("terr").textContent=r.error;$("terr").style.display="block";$("tres").innerHTML="";return}',
-  '  var h="<div class=\\"trk-head\\"><span>طلب <b>#"+r.id+"</b> · "+esc(r.title)+"</span><span>"+r.created+"</span></div>";',
-  '  if(r.rejected){h+="<p class=\\"alert\\" style=\\"display:block;margin-top:14px\\">لم تتم الموافقة على هذا الطلب، وأرسلنا لك السبب على بريدك.</p>"}',
-  '  else{h+="<ol class=\\"tl\\">"+STAGES.map(function(s,i){var cls=i<r.stage||r.stage===4?"done":(i===r.stage?"now":"");var extra="";',
-  '   if(i===2&&r.stage===2){extra=r.delayed?"<small>تأخير بسيط، نعمل عليه</small>":"<small>اكتمل "+r.progress+"%</small><div class=\\"bar\\"><i style=\\"width:"+Math.max(4,r.progress)+"%\\"></i></div>"}',
-  '   if(i===1&&r.stage===1)extra="<small>حوّل المبلغ واكتب اسمك في ملاحظات التحويل إن لم تفعل بعد</small>";',
-  '   return "<li class=\\""+cls+"\\">"+s+extra+"</li>"}).join("")+"</ol>"}',
-  '  $("tres").innerHTML=h})',
-  ' .withFailureHandler(function(){b.disabled=false;b.textContent="عرض الحالة";$("terr").textContent="تعذر الاتصال. حاول مرة أخرى.";$("terr").style.display="block"})',
-  ' .trackRequest($("tid").value,$("tem").value)});',
-  'if(TRACK_ID){$("tid").value=TRACK_ID;openTrack()}',
-  'load();show(0,false);',
-].join('\n');
+// واجهة الطالب نفسها في docs/index.html (GitHub Pages)، وتتصل بالخلفية عبر doPost.
 
 function reviewPage_(p) {
   const id = Number(p.id), a = p.a === 'reject' ? 'reject' : 'approve';

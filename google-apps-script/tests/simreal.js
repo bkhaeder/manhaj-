@@ -24,6 +24,7 @@ const g={
   LockService:{getScriptLock:()=>({waitLock(){},tryLock:()=>true,releaseLock(){}})},
   CacheService:{getScriptCache:()=>({get:k=>cache[k]||null,put:(k,v)=>{cache[k]=v}})},
   MailApp:{sendEmail:o=>mails.push(o)},
+  ContentService:{MimeType:{JSON:'json'},createTextOutput:t=>({text:t,setMimeType(){return this}})},
   HtmlService:{XFrameOptionsMode:{ALLOWALL:1},createHtmlOutput:h=>({html:h,setTitle(){return this},addMetaTag(){return this},setXFrameOptionsMode(){return this}})},
   DocumentApp:{create:()=>{docLog=[];para('first');return{getBody:()=>body,saveAndClose(){},getId:()=>'DOC',getUrl:()=>'docurl'}},
     Attribute:{},HorizontalAlignment:{},ParagraphHeading:{HEADING1:1,HEADING2:2,HEADING3:3},GlyphType:{},ElementType:{PARAGRAPH:'P'}},
