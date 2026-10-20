@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<title>منهج - فيديو</title>
+<link rel="stylesheet" href="fonts.css">
+<style>
+:root{--lapis:#1d3a8a;--deep:#0f1f4d;--night:#0a1433;--turq:#17a398;--mint:#7fe3d8;--gold:#e9bb45;--ink:#141b2d;--paper:#ffffff;--muted:#5b6478;
+  --display:"Reem Kufi",sans-serif;--body:"Readex Pro",sans-serif;--naskh:"Amiri",serif}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:1080px;height:1920px;overflow:hidden;background:var(--night)}
+#stage{position:relative;width:1080px;height:1920px;overflow:hidden;font-family:var(--body);color:#fff;
+  background:radial-gradient(120% 70% at 50% 0%,#2a4fb0 0%,var(--lapis) 35%,var(--deep) 75%,var(--night) 100%)}
+#pattern{position:absolute;inset:-200px;opacity:.09;background-size:150px 150px;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cpath d='M50 4 63 21 84 16 79 37 96 50 79 63 84 84 63 79 50 96 37 79 16 84 21 63 4 50 21 37 16 16 37 21Z' fill='none' stroke='white' stroke-width='2.2'/%3E%3C/svg%3E")}
+.glow{position:absolute;border-radius:50%;filter:blur(80px);opacity:.45}
+#g1{width:700px;height:700px;background:var(--turq);top:-200px;left:-250px}
+#g2{width:600px;height:600px;background:#3f6be0;bottom:150px;right:-250px}
+.scene{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;opacity:0}
+.k{font-family:var(--display);font-weight:700}
+/* المشهد 1 */
+#clock{width:420px;height:420px}
+#s0 h1{font-size:118px;line-height:1.25;text-align:center;margin-top:60px}
+#s0 h1 em{font-style:normal;color:var(--gold)}
+/* المشهد 2: الشعار */
+#logo{width:360px;height:360px;filter:drop-shadow(0 0 60px rgba(23,163,152,.55))}
+#s1 .name{font-size:150px;margin-top:40px;letter-spacing:2px}
+#s1 .tag{font-size:54px;color:#d6def5;margin-top:24px;text-align:center;line-height:1.6;font-family:var(--body)}
+#s1 .tag b{color:var(--mint);font-weight:600}
+/* المشهد 3: الهاتف */
+#phone{width:640px;height:1180px;border-radius:72px;background:#0b132e;padding:22px;box-shadow:0 50px 120px rgba(0,0,0,.55),0 0 0 3px rgba(255,255,255,.12)}
+#screen{width:100%;height:100%;border-radius:54px;background:#f5f7fb;overflow:hidden;color:var(--ink);padding:56px 40px;display:flex;flex-direction:column;gap:26px}
+#screen .bar{display:flex;gap:10px}#screen .bar i{flex:1;height:12px;border-radius:9px;background:#dfe3ec;position:relative;overflow:hidden}
+#screen .bar i b{position:absolute;inset:0;background:var(--turq);transform-origin:right;transform:scaleX(0)}
+#screen h3{font-family:var(--display);color:var(--lapis);font-size:46px}
+.field{display:flex;flex-direction:column;gap:10px}.field span{font-size:28px;color:var(--muted);font-weight:600}
+.field div{height:84px;border-radius:20px;border:3px solid #dfe3ec;background:#fff;font-size:34px;display:flex;align-items:center;padding:0 24px;white-space:nowrap;overflow:hidden}
+.field div.on{border-color:var(--lapis)}
+.btn{height:96px;border-radius:22px;background:var(--lapis);color:#fff;font-size:38px;font-weight:600;display:flex;align-items:center;justify-content:center;margin-top:auto}
+#stopwatch{position:absolute;top:230px;left:60px;background:var(--gold);color:var(--night);font-family:var(--display);font-size:46px;padding:18px 34px;border-radius:999px;box-shadow:0 20px 50px rgba(0,0,0,.35)}
+/* المشهد 4: الأوراق */
+.pg{position:absolute;width:620px;height:877px;background:var(--paper);color:#111;border-radius:14px;box-shadow:0 40px 100px rgba(0,0,0,.45);
+  padding:70px 56px;font-family:var(--naskh);display:flex;flex-direction:column;text-align:center}
+.pg .l{font-weight:700;font-size:28px;line-height:1.5}
+.pg .t{font-weight:700;font-size:44px;line-height:1.45;margin:46px 0 14px}
+.pg .s{font-size:22px;color:#333}
+.pg .sp{flex:1}
+.pg h5{font-size:40px;margin-bottom:22px}
+.pg table{width:100%;border-collapse:collapse;font-size:23px;text-align:right}
+.pg td{border:1.5px solid #333;padding:7px 12px}.pg td:first-child{width:56px;text-align:center}.pg tr:first-child td{background:#e8ebf2;font-weight:700}
+.pg p{font-size:23px;line-height:1.9;text-align:justify;margin-bottom:12px}
+.pg h6{font-size:30px;text-align:right;margin:10px 0}
+.chip{position:absolute;background:#fff;color:var(--lapis);font-family:var(--display);font-size:44px;padding:20px 36px;border-radius:999px;
+  box-shadow:0 24px 60px rgba(0,0,0,.35);white-space:nowrap;display:flex;gap:16px;align-items:center}
+.chip i{width:46px;height:46px;border-radius:50%;background:var(--turq);color:#fff;font-style:normal;display:grid;place-items:center;font-size:30px}
+/* المشهد 5: البريد */
+#mail{width:420px;height:300px;position:relative}
+.file{position:absolute;width:220px;height:280px;border-radius:24px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;
+  font-family:var(--body);font-weight:600;box-shadow:0 30px 70px rgba(0,0,0,.4)}
+.file b{font-size:110px;line-height:1;font-family:var(--body)}.file span{font-size:34px}
+#word{background:#2b5797}#pdf{background:#c2412d}
+#track{width:760px;background:rgba(255,255,255,.08);border:2px solid rgba(255,255,255,.18);border-radius:40px;padding:44px 56px;margin-top:120px}
+.st{display:flex;align-items:center;gap:28px;font-size:44px;padding:16px 0;color:#c5cde6}
+.st .dot{width:58px;height:58px;border-radius:50%;border:5px solid rgba(255,255,255,.35);display:grid;place-items:center;font-size:32px;color:transparent;flex:none}
+.st.done{color:#fff}.st.done .dot{background:var(--turq);border-color:var(--turq);color:#fff}
+/* المشهد 6: السعر والنهاية */
+#price{background:#fff;color:var(--deep);border-radius:48px;padding:56px 80px;text-align:center;box-shadow:0 50px 120px rgba(0,0,0,.45)}
+#price .n{font-family:var(--display);font-size:200px;line-height:1;font-variant-numeric:tabular-nums}
+#price .c{font-size:60px;font-weight:600;margin-top:10px}
+#qi{margin-top:44px;font-size:52px;display:flex;align-items:center;gap:20px}
+#qi b{background:var(--gold);color:var(--night);padding:10px 30px;border-radius:999px;font-family:var(--display)}
+#end{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;opacity:0}
+#end .logo2{width:300px;height:300px;filter:drop-shadow(0 0 60px rgba(23,163,152,.6))}
+#end .name{font-size:150px;margin-top:30px}
+#end .tag{font-size:64px;color:var(--mint);margin-top:6px;font-family:var(--display)}
+#end .url{margin-top:70px;font-family:var(--body);font-size:46px;background:rgba(255,255,255,.12);border:2px solid rgba(255,255,255,.25);padding:20px 40px;border-radius:999px;direction:ltr}
+/* الترجمة */
+#cap{position:absolute;left:70px;right:70px;bottom:120px;text-align:center;font-size:46px;line-height:1.55;font-weight:600;
+  background:rgba(6,12,32,.62);border-radius:28px;padding:22px 30px;opacity:0;text-wrap:balance}
+#brandmark{position:absolute;top:70px;right:70px;display:flex;align-items:center;gap:16px;font-size:44px;opacity:0}
+#brandmark svg{width:64px;height:64px}
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="pattern"></div><div class="glow" id="g1"></div><div class="glow" id="g2"></div>
+  <div id="brandmark" class="k"><svg viewBox="0 0 100 100"><use href="#star" fill="#fff"/><circle cx="50" cy="50" r="10" fill="#17a398"/></svg>منصة منهج</div>
+
+  <svg width="0" height="0" style="position:absolute"><defs>
+    <path id="star" d="M50 4 63 21 84 16 79 37 96 50 79 63 84 84 63 79 50 96 37 79 16 84 21 63 4 50 21 37 16 16 37 21Z"/>
+  </defs></svg>
+
+  <!-- 1: موعد التسليم -->
+  <section class="scene" id="s0">
+    <svg id="clock" viewBox="0 0 200 200">
+      <circle cx="100" cy="100" r="88" fill="rgba(255,255,255,.08)" stroke="#fff" stroke-width="8"/>
+      <g stroke="#fff" stroke-width="6" stroke-linecap="round">
+        <line x1="100" y1="22" x2="100" y2="36"/><line x1="178" y1="100" x2="164" y2="100"/><line x1="100" y1="178" x2="100" y2="164"/><line x1="22" y1="100" x2="36" y2="100"/>
+      </g>
+      <line id="hourH" x1="100" y1="100" x2="100" y2="58" stroke="#fff" stroke-width="10" stroke-linecap="round"/>
+      <line id="minH" x1="100" y1="100" x2="100" y2="34" stroke="#e9bb45" stroke-width="7" stroke-linecap="round"/>
+      <circle cx="100" cy="100" r="9" fill="#e9bb45"/>
+    </svg>
+    <h1 class="k">موعد التسليم<br><em>يقترب؟</em></h1>
+  </section>
+
+  <!-- 2: الشعار -->
+  <section class="scene" id="s1">
+    <svg id="logo" viewBox="0 0 100 100"><use href="#star" fill="#fff"/>
+      <use href="#star" fill="none" stroke="#17a398" stroke-width="3" transform="translate(50 50) scale(.78) translate(-50 -50)"/>
+      <circle cx="50" cy="50" r="11" fill="#17a398"/></svg>
+    <div class="name k">منصة منهج</div>
+    <div class="tag">بحثك الأكاديمي <b>كاملاً</b><br>وفق <b>المنهج العلمي</b></div>
+  </section>
+
+  <!-- 3: نموذج الطلب على الهاتف -->
+  <section class="scene" id="s2">
+    <div id="phone"><div id="screen">
+      <div class="bar"><i><b></b></i><i><b></b></i><i><b></b></i><i><b></b></i></div>
+      <h3>اطلب بحثك</h3>
+      <div class="field"><span>الاسم الكامل</span><div id="f1"></div></div>
+      <div class="field"><span>الجامعة</span><div id="f2"></div></div>
+      <div class="field"><span>عنوان البحث</span><div id="f3"></div></div>
+      <div class="field"><span>عدد الصفحات</span><div id="f4" style="justify-content:center;font-family:var(--display);font-size:44px;color:var(--lapis)"></div></div>
+      <div class="btn" id="sendbtn">أرسل الطلب</div>
+    </div></div>
+    <div id="stopwatch">دقيقتان فقط</div>
+  </section>
+
+  <!-- 4: البحث -->
+  <section class="scene" id="s3">
+    <div class="pg" id="p3"><h5>الفصل الأول</h5><div style="font-weight:700;font-size:28px;margin-bottom:16px">الإطار النظري للتعلم الإلكتروني</div>
+      <h6>المبحث الأول: المفهوم والنشأة</h6>
+      <p>يمثّل التعلم الإلكتروني تحولاً جوهرياً في فلسفة التعليم الجامعي، إذ انتقل بالعملية التعليمية من حدود القاعة الدراسية إلى فضاء رقمي مفتوح (الزهراني، 2020).</p>
+      <p>ويرى الباحث أن هذا التحول امتد ليعيد تشكيل أدوار الأستاذ والطالب، فصار الأول ميسّراً للتعلم والثاني شريكاً في بنائه.</p>
+      <p>وتتباين تعريفات التعلم الإلكتروني بتباين المنطلقات النظرية لأصحابها (Garrison, 2017).</p></div>
+    <div class="pg" id="p2"><h5>المحتويات</h5><table>
+      <tr><td>ت</td><td>الموضوع</td></tr><tr><td>١</td><td>المستخلص</td></tr><tr><td>٢</td><td>المقدمة</td></tr>
+      <tr><td>٣</td><td>الفصل الأول: الإطار النظري</td></tr><tr><td>٤</td><td>&nbsp;&nbsp;المبحث الأول: المفهوم والنشأة</td></tr>
+      <tr><td>٥</td><td>&nbsp;&nbsp;المبحث الثاني: الأنماط والخصائص</td></tr><tr><td>٦</td><td>الفصل الثاني: الأثر في التحصيل</td></tr>
+      <tr><td>٧</td><td>الخاتمة</td></tr><tr><td>٨</td><td>المصادر والمراجع</td></tr></table></div>
+    <div class="pg" id="p1">
+      <div class="l">جمهورية العراق</div><div class="l">وزارة التعليم العالي والبحث العلمي</div>
+      <div class="l">جامعة بغداد</div><div class="l">كلية التربية</div><div class="l">قسم العلوم التربوية والنفسية</div>
+      <div class="s" style="margin-top:46px">بحث بعنوان</div>
+      <div class="t" style="margin-top:12px">أثر التعلم الإلكتروني في التحصيل الدراسي لطلبة الجامعة</div>
+      <div class="sp"></div><div class="l">إعداد الطالب</div><div class="s">أحمد علي حسن</div>
+      <div class="l" style="margin-top:14px">بإشراف</div><div class="s">أ.م.د. سارة محمود</div>
+      <div class="sp"></div><div class="l">بغداد ١٤٤٨هـ – ٢٠٢٦م</div></div>
+    <div class="chip" id="c1"><i>✓</i>غلاف رسمي معتمد</div>
+    <div class="chip" id="c2"><i>✓</i>فصول ومباحث منظمة</div>
+    <div class="chip" id="c3"><i>✓</i>توثيق علمي APA</div>
+    <div class="chip" id="c4"><i>✓</i>حتى 20 صفحة</div>
+  </section>
+
+  <!-- 5: البريد والمتابعة -->
+  <section class="scene" id="s4">
+    <div id="mail">
+      <svg viewBox="0 0 420 300" width="420" height="300"><rect x="6" y="6" width="408" height="288" rx="36" fill="#fff"/>
+        <path id="flap" d="M20 30 L210 170 L400 30" fill="none" stroke="#1d3a8a" stroke-width="16" stroke-linejoin="round"/></svg>
+      <div class="file" id="word"><b>W</b><span>Word</span></div>
+      <div class="file" id="pdf"><b>PDF</b><span>جاهز للطباعة</span></div>
+    </div>
+    <div id="track">
+      <div class="st" id="t1"><div class="dot">✓</div>استلمنا طلبك</div>
+      <div class="st" id="t2"><div class="dot">✓</div>التحقق والمراجعة</div>
+      <div class="st" id="t3"><div class="dot">✓</div>كتابة البحث</div>
+      <div class="st" id="t4"><div class="dot">✓</div>أُرسل إلى بريدك</div>
+    </div>
+  </section>
+
+  <!-- 6: السعر والنهاية -->
+  <section class="scene" id="s5">
+    <div id="price"><div class="n">10,000</div><div class="c">دينار عراقي فقط</div></div>
+    <div id="qi">الدفع عبر <b>كي كارد</b></div>
+  </section>
+  <div id="end">
+    <svg class="logo2" viewBox="0 0 100 100"><use href="#star" fill="#fff"/>
+      <use href="#star" fill="none" stroke="#17a398" stroke-width="3" transform="translate(50 50) scale(.78) translate(-50 -50)"/>
+      <circle cx="50" cy="50" r="11" fill="#17a398"/></svg>
+    <div class="name k">منصة منهج</div>
+    <div class="tag">بحثك جاهز للتسليم</div>
+    <div class="url">bkhaeder.github.io/manhaj-</div>
+  </div>
+
+  <div id="cap"></div>
+</div>
+<script src="gsap.min.js"></script>
+<script src="timing.js"></script>
+<script>
+const T = window.TIMING, S = T.scenes, C = T.clips;
+const tl = gsap.timeline({ paused: true, defaults: { ease: 'power3.out' } });
+const E = (t) => t;  // للقراءة فقط
+
+// خلفية متحركة طوال الفيديو
+tl.fromTo('#pattern', { x: 0, y: 0, rotate: 0 }, { x: -150, y: -150, rotate: 6, duration: T.total, ease: 'none' }, 0);
+tl.fromTo('#g1', { x: 0, y: 0 }, { x: 260, y: 520, duration: T.total, ease: 'sine.inOut' }, 0);
+tl.fromTo('#g2', { x: 0, y: 0 }, { x: -220, y: -600, duration: T.total, ease: 'sine.inOut' }, 0);
+
+function showScene(id, start, end, enter, exit) {
+  tl.set(id, { opacity: 1 }, start);
+  if (enter) enter(start);
+  if (end != null) { tl.to(id, { opacity: 0, scale: 1.04, duration: 0.35, ease: 'power2.in' }, end - 0.35); }
+}
+
+// 1) الساعة
+showScene('#s0', S[0], S[1], (t) => {
+  tl.from('#clock', { scale: 0.3, rotate: -40, opacity: 0, duration: 0.8, ease: 'back.out(1.7)' }, t + 0.1);
+  tl.fromTo('#minH', { rotate: 0, transformOrigin: '100px 100px' }, { rotate: 720, duration: 3.2, ease: 'power1.in', svgOrigin: '100 100' }, t + 0.2);
+  tl.fromTo('#hourH', { rotate: 0 }, { rotate: 60, duration: 3.2, ease: 'power1.in', svgOrigin: '100 100' }, t + 0.2);
+  tl.from('#s0 h1', { y: 80, opacity: 0, duration: 0.7 }, t + 0.45);
+  tl.to('#clock', { x: 8, duration: 0.06, repeat: 9, yoyo: true, ease: 'none' }, t + 2.4);
+});
+
+// 2) الشعار
+showScene('#s1', S[1], S[2], (t) => {
+  tl.from('#logo', { scale: 0, rotate: -180, duration: 1.1, ease: 'back.out(1.6)' }, t + 0.1);
+  tl.to('#logo', { rotate: 45, duration: 6, ease: 'none' }, t + 1.2);
+  tl.from('#s1 .name', { y: 60, opacity: 0, duration: 0.8 }, t + 0.7);
+  tl.from('#s1 .tag', { y: 40, opacity: 0, duration: 0.8 }, t + 1.6);
+  tl.to('#brandmark', { opacity: 1, duration: 0.6 }, S[2]);
+});
+
+// 3) نموذج الطلب
+function typeInto(sel, text, t, dur) {
+  const o = { n: 0 };
+  tl.set(sel, { className: 'on' }, t);
+  tl.to(o, { n: text.length, duration: dur, ease: 'none', onUpdate: () => { document.querySelector(sel).textContent = text.slice(0, Math.round(o.n)); } }, t);
+  tl.set(sel, { className: '' }, t + dur + 0.1);
+}
+showScene('#s2', S[2], S[3], (t) => {
+  tl.from('#phone', { y: 500, rotate: -8, opacity: 0, duration: 0.9 }, t);
+  tl.from('#stopwatch', { scale: 0, duration: 0.6, ease: 'back.out(2)' }, t + 0.7);
+  typeInto('#f1', 'أحمد علي حسن', t + 0.8, 0.9);
+  tl.to('#screen .bar i:nth-child(1) b', { scaleX: 1, duration: 0.5 }, t + 1.6);
+  typeInto('#f2', 'جامعة بغداد', t + 1.8, 0.8);
+  tl.to('#screen .bar i:nth-child(2) b', { scaleX: 1, duration: 0.5 }, t + 2.6);
+  typeInto('#f3', 'أثر التعلم الإلكتروني في التحصيل', t + 2.8, 1.2);
+  tl.to('#screen .bar i:nth-child(3) b', { scaleX: 1, duration: 0.5 }, t + 4.0);
+  const o = { n: 5 };
+  tl.to(o, { n: 15, duration: 0.6, ease: 'none', onUpdate: () => { document.getElementById('f4').textContent = Math.round(o.n) + ' صفحة'; } }, t + 4.0);
+  tl.to('#screen .bar i:nth-child(4) b', { scaleX: 1, duration: 0.4 }, t + 4.7);
+  tl.to('#sendbtn', { scale: 0.94, duration: 0.12, yoyo: true, repeat: 1 }, t + 4.9);
+  tl.to('#sendbtn', { backgroundColor: '#17a398', duration: 0.2 }, t + 5.0);
+});
+
+// 4) الأوراق والمزايا: الغلاف أولاً، ثم تنفتح الصفحات كالمروحة ويظهر الفصل في الأمام
+showScene('#s3', S[3], S[4], (t) => {
+  tl.set('#p1', { x: 0, y: -40, rotate: -2, zIndex: 3 }, t);
+  tl.set('#p2', { x: 0, y: -40, rotate: 0, zIndex: 2, opacity: 0 }, t);
+  tl.set('#p3', { x: 0, y: -40, rotate: 0, zIndex: 4, opacity: 0, scale: 0.86 }, t);
+  tl.from('#p1', { y: 900, rotate: 12, duration: 1.0 }, t);
+  tl.set('#p2', { opacity: 1 }, t + 2.4);
+  tl.to('#p1', { x: 250, y: -10, rotate: 10, scale: 0.86, zIndex: 1, duration: 0.9, ease: 'power2.inOut' }, t + 2.4);
+  tl.to('#p2', { x: -250, y: -10, rotate: -10, scale: 0.86, duration: 0.9, ease: 'power2.inOut' }, t + 2.6);
+  tl.to('#p3', { opacity: 1, scale: 0.9, y: 10, duration: 0.8, ease: 'back.out(1.4)' }, t + 4.4);
+  const chips = [['#c1', 120, 250], ['#c2', 420, 360], ['#c3', 70, 1330], ['#c4', 600, 1330]];
+  chips.forEach(([id, left, top], i) => {
+    tl.set(id, { left: left, top: top, zIndex: 6 }, t);
+    tl.from(id, { scale: 0, opacity: 0, duration: 0.55, ease: 'back.out(2)' }, t + 0.9 + i * 1.6);
+  });
+});
+
+// 5) البريد والمتابعة
+showScene('#s4', S[4], S[5], (t) => {
+  tl.set('#word', { left: 100, top: 10, opacity: 0 }, t); tl.set('#pdf', { left: 100, top: 10, opacity: 0 }, t);
+  tl.from('#mail', { scale: 0.4, opacity: 0, y: -200, duration: 0.8, ease: 'back.out(1.6)' }, t);
+  tl.to('#word', { opacity: 1, x: -260, y: -300, rotate: -10, duration: 0.8, ease: 'back.out(1.4)' }, t + 1.1);
+  tl.to('#pdf', { opacity: 1, x: 260, y: -300, rotate: 10, duration: 0.8, ease: 'back.out(1.4)' }, t + 1.6);
+  tl.from('#track', { y: 300, opacity: 0, duration: 0.8 }, t + 2.2);
+  ['#t1', '#t2', '#t3', '#t4'].forEach((id, i) => tl.set(id, { className: 'st done' }, t + 3.0 + i * 0.7));
+  tl.from('#t4 .dot', { scale: 0.4, duration: 0.4, ease: 'back.out(3)' }, t + 3.0 + 3 * 0.7);
+});
+
+// 6) السعر ثم بطاقة النهاية
+showScene('#s5', S[5], C[5].start + 3.3, (t) => {
+  tl.from('#price', { scale: 0.5, opacity: 0, duration: 0.8, ease: 'back.out(1.7)' }, t + 0.1);
+  const o = { n: 0 };
+  tl.to(o, { n: 10000, duration: 1.2, ease: 'power2.out', onUpdate: () => { document.querySelector('#price .n').textContent = Math.round(o.n).toLocaleString('en-US'); } }, t + 0.2);
+  tl.from('#qi', { y: 60, opacity: 0, duration: 0.6 }, t + 1.3);
+});
+const endT = C[5].start + 3.3;
+tl.to('#brandmark', { opacity: 0, duration: 0.3 }, endT - 0.3);
+tl.to('#end', { opacity: 1, duration: 0.6 }, endT);
+tl.from('#end .logo2', { scale: 0, rotate: -120, duration: 1.0, ease: 'back.out(1.6)' }, endT);
+tl.from('#end .name', { y: 60, opacity: 0, duration: 0.7 }, endT + 0.5);
+tl.from('#end .tag', { y: 40, opacity: 0, duration: 0.7 }, endT + 1.6);
+tl.from('#end .url', { y: 40, opacity: 0, duration: 0.7 }, endT + 2.6);
+tl.to('#end .logo2', { rotate: 30, duration: T.total - endT - 1, ease: 'none' }, endT + 1);
+
+// الترجمة النصية متزامنة مع الصوت
+C.forEach((c, i) => {
+  tl.call(() => { document.getElementById('cap').textContent = T.captions[i]; }, null, c.start - 0.12);
+  tl.fromTo('#cap', { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 0.25 }, c.start - 0.12);
+  tl.to('#cap', { opacity: 0, duration: 0.2 }, c.end + 0.15);
+});
+tl.set({}, {}, T.total);
+
+window.seek = (t) => { tl.seek(t, false); };
+window.DURATION = T.total;
+</script>
+</body>
+</html>
