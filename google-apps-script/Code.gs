@@ -482,7 +482,8 @@ function steps_(job) {
 // إذا خالف النموذج المطلوب (مثلاً كتب فصلاً بدل قائمة المراجع) يُرفض الرد ويُطلب من نموذج آخر.
 function words_(t) { return String(t).split(/\s+/).filter(Boolean).length; }
 function checkLength_(t, target) {
-  if (words_(t) > Math.max(3 * target, target + 300)) throw new Error('الرد أطول بكثير من المطلوب');
+  // الإطالة المعقولة مقبولة (تزيد الصفحات قليلاً فقط)؛ نرفض فقط الردود الشاذة جداً كأن يكتب النموذج البحث كله في جزء واحد
+  if (words_(t) > Math.max(5 * target, target + 700)) throw new Error('الرد أطول بكثير من المطلوب');
   if (words_(t) < 0.3 * target) throw new Error('الرد أقصر بكثير من المطلوب');
 }
 function checkHeadings_(min) {
