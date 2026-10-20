@@ -1,0 +1,26 @@
+# فحص سريع للخلفية (Apps Script) من خوادم GitHub: يطبع ما ترده واجهة الصفحة البرمجية.
+name: Check backend
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/check-backend.yml
+      - .github/apps-script-url
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Probe API
+        run: |
+          U="$(tr -d '[:space:]' < .github/apps-script-url)"
+          short() { tr '\n' ' ' | sed 's/<[^>]*>//g; s/  */ /g' | cut -c1-400; }
+          G=$(curl -sS -L -m 60 -w '\n%{http_code} %{content_type}' "$U?api=config" 2>&1)
+          echo "::notice title=GET config::$(echo "$G" | tail -1) | $(echo "$G" | head -n -1 | short)"
+          P=$(curl -sS -L -m 60 -X POST -H 'Content-Type: text/plain;charset=utf-8' \
+               --data '{"fn":"trackRequest","args":["999999","probe@example.com"]}' -w '\n%{http_code} %{content_type}' "$U" 2>&1)
+          echo "::notice title=POST track::$(echo "$P" | tail -1) | $(echo "$P" | head -n -1 | short)"
+          H=$(curl -sS -L -m 60 -o /dev/null -D - -X OPTIONS "$U" 2>&1 | grep -i 'access-control' | tr '\n' ' ')
+          echo "::notice title=CORS::${H:-none}"
