@@ -20,7 +20,7 @@ const g={
     base64EncodeWebSafe:b=>Buffer.from(b).toString('base64url')},
   Session:{getEffectiveUser:()=>({getEmail:()=>'admin@x.com'})},
   ScriptApp:{getService:()=>({getUrl:()=>'https://script.google.com/macros/s/X/exec'}),getProjectTriggers:()=>triggers,deleteTrigger:t=>triggers.splice(triggers.indexOf(t),1),
-    newTrigger:fn=>({timeBased:()=>({after:ms=>({create:()=>triggers.push({fn,ms,getHandlerFunction:()=>fn})})})}),getOAuthToken:()=>'tok'},
+    newTrigger:fn=>({timeBased:()=>({after:ms=>({create:()=>triggers.push({fn,ms,getHandlerFunction:()=>fn})}),everyMinutes:m=>({create:()=>{}})})}),getOAuthToken:()=>'tok'},
   LockService:{getScriptLock:()=>({waitLock(){},tryLock:()=>true,releaseLock(){}})},
   CacheService:{getScriptCache:()=>({get:k=>cache[k]||null,put:(k,v)=>{cache[k]=v}})},
   MailApp:{sendEmail:o=>mails.push(o)},
@@ -51,7 +51,7 @@ vm.createContext(g); vm.runInContext(code,g);
 g.setup();
 let r=vm.runInContext('submitRequest',g)({student_name:'أحمد',email:'s@x.com',university:'ج',college:'ك',department:'ق',governorate:'بغداد',supervisor:'م',title:'أثر التعلم الإلكتروني في التحصيل الدراسي لطلبة الجامعة',details:'أريد فصلاً نظرياً عن مفهوم التعلم الإلكتروني وأنواعه، وفصلاً عن أثره في التحصيل مع عرض دراسات سابقة.',language:'ar',pages:'25'});
 console.log('25 pages ->',r.ok,r.errors);
-r=g.submitRequest({student_name:'أحمد',email:'s@x.com',university:'ج',college:'ك',department:'ق',governorate:'بغداد',supervisor:'م',title:'أثر التعلم الإلكتروني في التحصيل الدراسي لطلبة الجامعة',details:'أريد فصلاً نظرياً عن مفهوم التعلم الإلكتروني وأنواعه، وفصلاً عن أثره في التحصيل مع عرض دراسات سابقة.',language:'ar',pages:'8'});
+r=g.submitRequest({student_name:'أحمد',email:'s@x.com',university:'ج',college:'ك',department:'ق',governorate:'بغداد',supervisor:'م',title:'أثر التعلم الإلكتروني في التحصيل الدراسي لطلبة الجامعة',details:'أريد فصلاً نظرياً عن مفهوم التعلم الإلكتروني وأنواعه، وفصلاً عن أثره في التحصيل مع عرض دراسات سابقة.',language:'ar',pages:'14'});
 console.log('submit',r);
 const html=mails[0].htmlBody; const link=html.match(/href="([^"]*a=approve[^"]*)"/)[1];
 const q=new URL(link).searchParams;

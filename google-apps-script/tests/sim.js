@@ -20,7 +20,7 @@ const g={
     base64EncodeWebSafe:b=>Buffer.from(b).toString('base64url')},
   Session:{getEffectiveUser:()=>({getEmail:()=>'admin@x.com'})},
   ScriptApp:{getService:()=>({getUrl:()=>'https://script.google.com/macros/s/X/exec'}),getProjectTriggers:()=>triggers,deleteTrigger:t=>triggers.splice(triggers.indexOf(t),1),
-    newTrigger:fn=>({timeBased:()=>({after:ms=>({create:()=>triggers.push({fn,ms,getHandlerFunction:()=>fn})})})}),getOAuthToken:()=>'tok'},
+    newTrigger:fn=>({timeBased:()=>({after:ms=>({create:()=>triggers.push({fn,ms,getHandlerFunction:()=>fn})}),everyMinutes:m=>({create:()=>{}})})}),getOAuthToken:()=>'tok'},
   LockService:{getScriptLock:()=>({waitLock(){},tryLock:()=>true,releaseLock(){}})},
   CacheService:{getScriptCache:()=>({get:k=>cache[k]||null,put:(k,v)=>{cache[k]=v}})},
   MailApp:{sendEmail:o=>mails.push(o)},
@@ -38,6 +38,7 @@ const g={
     else { const n=+((p.match(/نحو (\d+) كلمة/)||[0,120])[1]); const body=('فقرة **مهمة** (العلي، 2019) '.repeat(Math.ceil(n/4))).trim();
       if(p.includes('اكتب مستخلص')) c=body+'\n**الكلمات المفتاحية:** أ، ب، ج';
       else if(p.includes('قائمة المصادر')) c='### أولاً: المصادر العربية\n- العلي، م. (2019). كتاب. دار.\n- حسن، ع. (2020). كتاب. دار.\n- كاظم، ر. (2018). بحث. مجلة.\n### ثانياً: المصادر الأجنبية\n- Smith, J. (2020). Book. Press.\n- Doe, A. (2017). Article. Journal.';
+      else if(p.includes('متن الفصل')) c='تمهيد الفصل '+body+'\n'+p.split('\n').filter(l=>l.startsWith('## ')).map(h=>h+'\n'+body).join('\n');
       else if(p.includes('مقدمة البحث')) c='تمهيد.\n### أولاً: مشكلة البحث\n'+body+'\n### ثانياً: أهمية البحث\nنص.\n### ثالثاً: أهداف البحث\nنص.';
       else if(p.includes('خاتمة البحث')) c='### أولاً: الاستنتاجات\n1- '+body+'\n### ثانياً: التوصيات\n1- توصية.';
       else c=body; }
@@ -77,3 +78,4 @@ console.log('api unknown:', JSON.stringify(post('setup',[])));
 console.log('api broken body:', g.doPost({postData:{contents:'{bad'}}).text);
 console.log('api config:', g.doGet({parameter:{api:'config'}}).text);
 console.log('moved page:', g.doGet({parameter:{}}).html.includes('github.io/manhaj-'));
+console.log('health:', g.doGet({parameter:{api:'health'}}).text.slice(0,400));

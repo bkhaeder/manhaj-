@@ -19,15 +19,25 @@
 // أي قيمة هنا يمكن تجاوزها من «إعدادات المشروع ← خصائص النص البرمجي» بالاسم نفسه (مثل GEMINI_API_KEY أو PUBLIC_URL).
 // هذا ضروري مع النشر التلقائي من GitHub: الكود يُستبدل عند كل تحديث، أما خصائص المشروع فتبقى، والمفاتيح لا تُرفع إلى GitHub.
 const CONFIG = {
-  GEMINI_API_KEY: '',        // مطلوب: https://aistudio.google.com/apikey
-  GROQ_API_KEY: '',          // اختياري (احتياطي ومراجِع): https://console.groq.com/keys
-  OPENROUTER_API_KEY: '',    // اختياري: https://openrouter.ai/keys
-  ADMIN_EMAIL: '',           // فارغ = إيميل حسابك في Google
-  // حصة Gemini المجانية نحو 20 طلباً يومياً لكل نموذج، فنجرب عدة نماذج بالترتيب
-  GEMINI_MODELS: ['gemini-flash-latest', 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-3-flash-preview',
-                  'gemini-flash-lite-latest', 'gemini-3.5-flash-lite'],  // الأخيران أخف وأقل جودة: احتياط أخير
+  // ----- محركات الذكاء الاصطناعي (كلها مجانية). تُجرَّب بالترتيب، وإذا نفدت حصة محرك يُنتقل للتالي -----
+  GEMINI_API_KEY: '',        // مطلوب: https://aistudio.google.com/apikey (يشغّل نماذج Gemini وGemma كلها)
+  // لكل نموذج حصة مجانية يومية منفصلة. الأقوى أولاً، ثم Gemma (حصتها كبيرة)، ثم النماذج الخفيفة احتياطاً أخيراً
+  GEMINI_MODELS: ['gemini-flash-latest', 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-3-flash-preview'],
+  GEMMA_MODELS: ['gemma-4-31b-it', 'gemma-4-26b-a4b-it'],
+  LITE_MODELS: ['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', 'gemini-flash-lite-latest'],
+  // محركات اختيارية من شركات أخرى: ضع مفتاح أي منها في «خصائص النص البرمجي» فيُضاف تلقائياً
+  GROQ_API_KEY: '',          // https://console.groq.com/keys
   GROQ_MODEL: 'llama-3.3-70b-versatile',
+  CEREBRAS_API_KEY: '',      // https://cloud.cerebras.ai (API Keys)
+  CEREBRAS_MODEL: 'gpt-oss-120b',
+  GITHUB_MODELS_TOKEN: '',   // رمز GitHub بصلاحية Models: https://github.com/settings/personal-access-tokens
+  GITHUB_MODEL: 'openai/gpt-4.1-mini',
+  MISTRAL_API_KEY: '',       // https://console.mistral.ai/api-keys
+  MISTRAL_MODEL: 'mistral-large-latest',
+  OPENROUTER_API_KEY: '',    // https://openrouter.ai/keys
   OPENROUTER_MODEL: 'deepseek/deepseek-chat-v3.1:free',
+  ADMIN_EMAIL: '',           // فارغ = إيميل حسابك في Google
+  NOTIFY_ADMIN_DONE: false,  // إيميل لك عند إرسال كل بحث (معطّل لتوفير حصة Gmail اليومية)
   REVIEW: false,             // مراجعة كل جزء بمحرك ثانٍ (تضاعف استهلاك الحصص المجانية)
   MIN_PAGES: 5,
   MAX_PAGES: 20,
@@ -77,13 +87,14 @@ const FIELDS = {
 
 // ----------------------------- الإعداد والتخزين -----------------------------
 function setup() {
+  ensureWatchdog_();
   sheet_().getRange(1, 1, 1, COLS.length).setValues([COLS]);
   folder_();
   secret_();
   const url = ScriptApp.getService().getUrl();
   Logger.log('تم الإعداد ✓ الجدول: ' + SpreadsheetApp.openById(props_().getProperty('SHEET_ID')).getUrl());
   Logger.log('رابط المنصة (بعد النشر): ' + (url || 'انشر المشروع كتطبيق ويب أولاً'));
-  if (!CONFIG.GEMINI_API_KEY && !CONFIG.GROQ_API_KEY && !CONFIG.OPENROUTER_API_KEY) {
+  if (!engines_().length) {
     Logger.log('⚠ لم تضع أي مفتاح ذكاء اصطناعي في CONFIG');
   }
 }
@@ -157,7 +168,8 @@ function saveJob_(id, job) {
 // ----------------------------- واجهة الويب -----------------------------
 function doGet(e) {
   const p = (e && e.parameter) || {};
-  if (p.api === 'config') return json_(publicConfig_());
+  if (p.api === 'config') { kick_(); return json_(publicConfig_()); }
+  if (p.api === 'health') return json_(health_());
   const html = (p.id && p.a && p.sig) ? reviewPage_(p) : movedPage_();
   return HtmlService.createHtmlOutput(html)
     .setTitle('منصة منهج')
@@ -185,6 +197,27 @@ function doPost(e) {
 
 function json_(obj) {
   return ContentService.createTextOutput(JSON.stringify(obj)).setMimeType(ContentService.MimeType.JSON);
+}
+
+/** حالة المنصة للتشخيص: أعداد الطلبات، والبحوث الجارية، وآخر الأخطاء، والمحركات المتاحة. بلا أسماء أو إيميلات. */
+function health_() {
+  const sh = sheet_(), n = sh.getLastRow() - 1, out = { time: new Date().toISOString(), counts: {}, active: [], errors: [] };
+  const rows = n > 0 ? sh.getRange(2, 1, n, COLS.length).getValues() : [];
+  const cache = CacheService.getScriptCache();
+  rows.forEach(function (row) {
+    const r = {}; COLS.forEach(function (c, i) { r[c] = row[i]; });
+    out.counts[r.status] = (out.counts[r.status] || 0) + 1;
+    if (r.status === 'approved' || r.status === 'generating') {
+      const job = loadJob_(r.id) || {};
+      out.active.push({ id: r.id, status: r.status, pages: r.pages, step: job.step, total: job.outline ? steps_(job).length : null,
+                        waits: job.waits || 0, attempts: job.attempts || 0, v: job.v || 1 });
+    }
+    if (r.error) out.errors.push({ id: r.id, status: r.status, error: String(r.error).slice(0, 300) });
+  });
+  out.errors = out.errors.slice(-5);
+  out.engines = engines_().map(function (e) { return e.name + (cache.get('cool_' + e.name) ? ' (انتظار)' : ''); });
+  out.triggers = ScriptApp.getProjectTriggers().map(function (t) { return t.getHandlerFunction(); });
+  return out;
 }
 
 function publicConfig_() {
@@ -280,8 +313,9 @@ function reviewAction(id, action, sig, reason) {
   if (r.status !== 'pending' && r.status !== 'failed') return 'تمت معالجة هذا الطلب مسبقاً (' + STATUS[r.status] + ').';
   if (action === 'approve') {
     setReq_(id, { status: 'approved', error: '' });
-    saveJob_(id, { step: 0, attempts: 0, parts: {}, engines: [] });
+    saveJob_(id, { v: 2, step: 0, attempts: 0, waits: 0, parts: {}, engines: [] });
     scheduleNext_(1);
+    ensureWatchdog_();
     safeMail_(r.email, 'بدأنا كتابة بحثك - منصة منهج',
       '<p>مرحباً ' + esc_(r.student_name) + '،</p><p>تأكدنا من طلبك رقم <b>#' + id + '</b>، وبدأنا الآن كتابة بحثك بعنوان <b>«' +
       esc_(r.title) + '»</b>.</p><p>يصلك البحث عادةً خلال ساعة على هذا البريد بملفي Word وPDF. يمكنك متابعة تقدّم الكتابة من ' +
@@ -300,6 +334,34 @@ function reviewAction(id, action, sig, reason) {
 }
 
 // ----------------------------- معالجة الطلبات في الخلفية -----------------------------
+/** مشغّل احتياطي كل 10 دقائق: إذا وُجد بحث عالق يستأنف كتابته. */
+function ensureWatchdog_() {
+  const exists = ScriptApp.getProjectTriggers().some(function (t) { return t.getHandlerFunction() === 'watchdog'; });
+  if (!exists) ScriptApp.newTrigger('watchdog').timeBased().everyMinutes(10).create();
+}
+
+/**
+ * يوقظ البحوث العالقة: يُستدعى عند فتح أي طالب للمنصة (مرة كل 5 دقائق على الأكثر).
+ * إذا وُجد بحث قيد الكتابة بلا مشغّل، يعيد جدولته ويثبّت المراقب الاحتياطي.
+ */
+function kick_() {
+  try {
+    const cache = CacheService.getScriptCache();
+    if (cache.get('kicked')) return;
+    cache.put('kicked', '1', 300);
+    if (nextJobId_() === null) return;
+    ensureWatchdog_();
+    const pending = ScriptApp.getProjectTriggers().some(function (t) { return t.getHandlerFunction() === 'processJobs'; });
+    if (!pending) scheduleNext_(1);
+  } catch (e) {
+    console.warn('kick: ' + e);
+  }
+}
+
+function watchdog() {
+  if (nextJobId_() !== null) processJobs();
+}
+
 function scheduleNext_(seconds) {
   ScriptApp.getProjectTriggers().forEach(function (t) {
     if (t.getHandlerFunction() === 'processJobs') ScriptApp.deleteTrigger(t);
@@ -336,7 +398,8 @@ function processJobs() {
     let id;
     while ((id = nextJobId_()) !== null && Date.now() - start < STEP_BUDGET_MS) {
       const r = getReq_(id);
-      const job = loadJob_(id) || { step: 0, attempts: 0, parts: {}, engines: [] };
+      let job = loadJob_(id);
+      if (!job || job.v !== 2) job = { v: 2, step: 0, attempts: 0, waits: 0, parts: {}, engines: [] };
       if (r.status === 'approved') setReq_(id, { status: 'generating' });
       try {
         const finished = runStep_(r, job);
@@ -344,7 +407,7 @@ function processJobs() {
         saveJob_(id, job);
         if (finished) {
           setReq_(id, { status: 'sent', engines: job.engines.join('، '), doc_url: job.docUrl });
-          safeMail_(adminEmail_(), 'تم الإرسال: طلب #' + id,
+          if (CONFIG.NOTIFY_ADMIN_DONE) safeMail_(adminEmail_(), 'تم الإرسال: طلب #' + id,
             '<p>✓ تم إنشاء البحث #' + id + ' «' + esc_(r.title) + '» وإرساله إلى ' + esc_(r.email) + '.</p>' +
             '<p>المحركات المستخدمة: ' + esc_(job.engines.join('، ')) + '</p><p><a href="' + job.docUrl + '">فتح البحث</a></p>');
           const f = jobFile_(id);
@@ -356,7 +419,7 @@ function processJobs() {
         if (quota) job.waits = (job.waits || 0) + 1; else job.attempts = (job.attempts || 0) + 1;
         saveJob_(id, job);
         console.warn('طلب #' + id + ' الخطوة ' + job.step + (quota ? ' انتظار الحصة ' + job.waits : ' محاولة ' + job.attempts) + ': ' + e);
-        if (quota && job.waits === 3) {
+        if (quota && job.waits === 2) {
           safeMail_(adminEmail_(), 'تأخير: طلب #' + id,
             '<p>نفدت حصة الذكاء الاصطناعي المجانية مؤقتاً أثناء كتابة البحث #' + id + ' «' + esc_(r.title) + '».</p>' +
             '<p>ستُكمل المنصة الكتابة تلقائياً عند تجدد الحصة، ولا تحتاج لفعل شيء.</p>');
@@ -406,10 +469,8 @@ function steps_(job) {
   if (CONFIG.REVIEW) list.push('review:intro');
   if (job.outline) {
     job.outline.chapters.forEach(function (ch, i) {
-      ch.sections.forEach(function (_, j) {
-        list.push('sec:' + i + ':' + j);
-        if (CONFIG.REVIEW) list.push('review:sec:' + i + ':' + j);
-      });
+      list.push('ch:' + i);
+      if (CONFIG.REVIEW) ch.sections.forEach(function (_, j) { list.push('review:sec:' + i + ':' + j); });
     });
   }
   return list.concat(['conclusion', 'references', 'build']);
@@ -449,6 +510,14 @@ function cleanReferences_(t) {
     return /^#{1,6}\s/.test(x) && /المصادر|المراجع|References|Sources|Bibliography/i.test(x);
   }).join('\n');
 }
+/** يقسم نص الفصل إلى مباحث حسب عناوين «## »؛ الفقرة التمهيدية تُضم إلى المبحث الأول. */
+function splitChapter_(t, n) {
+  const parts = String(t).split(/^##(?!#)[ \t]*.*$/m);
+  if (parts.length - 1 !== n) throw new Error('الفصل لا يحتوي المباحث المطلوبة (' + (parts.length - 1) + ' من ' + n + ')');
+  const intro = parts.shift().trim();
+  return parts.map(function (p, j) { return ((j === 0 && intro ? intro + '\n\n' : '') + p.trim()).trim(); });
+}
+
 function checkReferences_(t) {
   t = cleanReferences_(t);
   const items = String(t).split('\n').filter(function (l) { return /^\s*([-*•]|\d+[.)-])\s+/.test(l); });
@@ -491,6 +560,18 @@ function runStep_(r, job) {
       'الآتية بالترتيب، كل عنصر تحت عنوان فرعي ### مسبوق بالترتيب الوصفي (' +
       (r.language === 'ar' ? 'أولاً: ، ثانياً: ، ...' : 'First: , Second: , ...') + '): ' + parts + '.',
       { validate: function (t) { checkHeadings_(3)(t); checkLength_(t, sz.intro); } });
+  } else if (name.indexOf('ch:') === 0) {
+    const i = Number(name.split(':')[1]);
+    const ch = job.outline.chapters[i];
+    const nSec = job.outline.chapters.reduce(function (a, c) { return a + c.sections.length; }, 0);
+    const per = Math.round(sz.body / nSec);
+    const text = write(P + 'اكتب الآن متن الفصل ' + (i + 1) + ': «' + ch.title + '» كاملاً. ابدأ بفقرة تمهيدية قصيرة للفصل، ' +
+      'ثم اكتب كل مبحث تحت سطر عنوان يبدأ بعلامتي ## متبوعتين باسم المبحث كما هو بالضبط، بهذا الترتيب:\n' +
+      ch.sections.map(function (sec) { return '## ' + sec; }).join('\n') + '\n' +
+      'في نحو ' + per + ' كلمة لكل مبحث. داخل المبحث يمكنك استخدام عناوين فرعية ### مسبوقة بالترتيب الوصفي (أولاً، ثانياً...). ' +
+      'لا تكتب عنوان الفصل، ولا مباحث غير المذكورة، ولا خلاصة عامة للبحث.',
+      { validate: function (t) { splitChapter_(t, ch.sections.length); checkLength_(t, per * ch.sections.length); } });
+    splitChapter_(text, ch.sections.length).forEach(function (part, j) { job.parts['sec:' + i + ':' + j] = part; });
   } else if (name.indexOf('sec:') === 0) {
     const ij = name.split(':').slice(1).map(Number);
     const ch = job.outline.chapters[ij[0]];
@@ -592,16 +673,31 @@ function system_(r) {
 
 // ----------------------------- محركات الذكاء الاصطناعي -----------------------------
 function engines_() {
-  const all = CONFIG.GEMINI_MODELS.map(function (m) {
-    return { name: 'gemini:' + m, key: CONFIG.GEMINI_API_KEY, model: m,
-             url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', extra: { reasoning_effort: 'medium' } };
-  }).concat([
-    { name: 'groq', key: CONFIG.GROQ_API_KEY, model: CONFIG.GROQ_MODEL,
-      url: 'https://api.groq.com/openai/v1/chat/completions', extra: {} },
-    { name: 'openrouter', key: CONFIG.OPENROUTER_API_KEY, model: CONFIG.OPENROUTER_MODEL,
-      url: 'https://openrouter.ai/api/v1/chat/completions', extra: {} },
-  ]);
-  return all.filter(function (e) { return e.key; });
+  const G = 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
+  const google = function (models, extra, maxTokens) {
+    return models.map(function (m) {
+      return { name: 'google:' + m, key: CONFIG.GEMINI_API_KEY, model: m, url: G, extra: extra, maxTokens: maxTokens };
+    });
+  };
+  const all = [].concat(
+    google(CONFIG.GEMINI_MODELS, { reasoning_effort: 'medium' }, 8000),
+    // Gemma يكتب تفكيره داخل الرد، فنعطيه مساحة أكبر ونحذف التفكير لاحقاً
+    google(CONFIG.GEMMA_MODELS, {}, 16000),
+    [
+      { name: 'groq', key: CONFIG.GROQ_API_KEY, model: CONFIG.GROQ_MODEL, url: 'https://api.groq.com/openai/v1/chat/completions' },
+      { name: 'cerebras', key: CONFIG.CEREBRAS_API_KEY, model: CONFIG.CEREBRAS_MODEL, url: 'https://api.cerebras.ai/v1/chat/completions' },
+      { name: 'github', key: CONFIG.GITHUB_MODELS_TOKEN, model: CONFIG.GITHUB_MODEL, url: 'https://models.github.ai/inference/chat/completions' },
+      { name: 'mistral', key: CONFIG.MISTRAL_API_KEY, model: CONFIG.MISTRAL_MODEL, url: 'https://api.mistral.ai/v1/chat/completions' },
+      { name: 'openrouter', key: CONFIG.OPENROUTER_API_KEY, model: CONFIG.OPENROUTER_MODEL, url: 'https://openrouter.ai/api/v1/chat/completions' },
+    ],
+    google(CONFIG.LITE_MODELS, { reasoning_effort: 'low' }, 8000)
+  );
+  return all.filter(function (e) { return e.key && e.model; });
+}
+
+/** يحذف «التفكير» الذي تكتبه بعض النماذج (مثل Gemma) داخل الرد. */
+function stripThoughts_(t) {
+  return String(t).replace(/<(thought|think|thinking)>[\s\S]*?<\/\1>/gi, '').replace(/^[\s\S]*<\/(thought|think|thinking)>/i, '').trim();
 }
 
 /** يجرب المحركات بالترتيب (بدءاً من opts.start) ويعيد {text, engine}. */
@@ -617,9 +713,9 @@ function callEngine_(system, prompt, opts) {
     if (cache.get('cool_' + e.name)) { errors.push(e.name + ': في فترة تهدئة'); continue; }
     try {
       const body = Object.assign({
-        model: e.model, max_tokens: 8000, temperature: 0.7,
+        model: e.model, max_tokens: e.maxTokens || 8000, temperature: 0.7,
         messages: [{ role: 'system', content: system }, { role: 'user', content: prompt }],
-      }, e.extra);
+      }, e.extra || {});
       if (opts.json) body.response_format = { type: 'json_object' };
       const resp = UrlFetchApp.fetch(e.url, {
         method: 'post', contentType: 'application/json', muteHttpExceptions: true,
@@ -637,10 +733,14 @@ function callEngine_(system, prompt, opts) {
         cache.put('cool_' + e.name, '1', Math.max(30, Math.min(21600, Math.round(wait))));
         throw new Error('HTTP ' + code + ' (تجاوز الحد المجاني مؤقتاً)');
       }
+      if (code === 401 || code === 403) {
+        cache.put('cool_' + e.name, '1', 3600);  // مفتاح خاطئ أو بلا صلاحية: لا نكرر المحاولة لساعة
+        throw new Error('HTTP ' + code + ': المفتاح غير صالح');
+      }
       if (code !== 200) throw new Error('HTTP ' + code + ': ' + resp.getContentText().slice(0, 200));
       const choice = JSON.parse(resp.getContentText()).choices[0];
       if (choice.finish_reason === 'length') throw new Error('انقطع الرد لتجاوز الطول');
-      const text = String((choice.message && choice.message.content) || '').trim();
+      const text = stripThoughts_((choice.message && choice.message.content) || '');
       if (!text) throw new Error('رد فارغ');
       if (opts.validate) opts.validate(text);
       return { text: text, engine: e.name };
