@@ -73,7 +73,7 @@ const GOVERNORATES = {
 
 const WORDS_PER_PAGE = 155;  // مقيس فعلياً بخط Amiri 14 وتباعد 1.5 على صفحة A4
 const STEP_BUDGET_MS = 4 * 60 * 1000;   // حد التنفيذ في Apps Script 6 دقائق؛ نترك هامشاً
-const MAX_ATTEMPTS = 6;
+const MAX_ATTEMPTS = 8;
 const COLS = ['id', 'created', 'status', 'student_name', 'email', 'university', 'college', 'department',
               'specialization', 'supervisor', 'title', 'details', 'language', 'pages', 'engines', 'error', 'doc_url',
               'governorate'];  // عمود specialization قديم ويبقى فارغاً حتى لا تتغير أعمدة الجداول الموجودة
@@ -210,7 +210,7 @@ function health_() {
     if (r.status === 'approved' || r.status === 'generating') {
       const job = loadJob_(r.id) || {};
       out.active.push({ id: r.id, status: r.status, pages: r.pages, step: job.step, total: job.outline ? steps_(job).length : null,
-                        waits: job.waits || 0, attempts: job.attempts || 0, v: job.v || 1 });
+                        waits: job.waits || 0, attempts: job.attempts || 0, v: job.v || 1, lastError: job.lastError || '' });
     }
     if (r.error) out.errors.push({ id: r.id, status: r.status, error: String(r.error).slice(0, 300) });
   });
@@ -417,6 +417,7 @@ function processJobs() {
         // نفاد الحصة المجانية ليس فشلاً: ننتظر تجددها (حتى نحو 24 ساعة) بدل إلغاء البحث
         const quota = isQuotaError_(e);
         if (quota) job.waits = (job.waits || 0) + 1; else job.attempts = (job.attempts || 0) + 1;
+        job.lastError = String(e).slice(0, 400);
         saveJob_(id, job);
         console.warn('طلب #' + id + ' الخطوة ' + job.step + (quota ? ' انتظار الحصة ' + job.waits : ' محاولة ' + job.attempts) + ': ' + e);
         if (quota && job.waits === 2) {
@@ -451,7 +452,8 @@ function sizes_(r) {
   const total = Math.round(contentPages * WORDS_PER_PAGE);
   const s = { chapters: chapters, refs: refs, abstract: Math.max(80, Math.round(total * 0.08)),
               intro: Math.max(150, Math.round(total * 0.18)), conc: Math.max(100, Math.round(total * 0.12)) };
-  s.body = total - s.abstract - s.intro - s.conc;
+  // البحوث القصيرة: لا يقل متن كل مبحث عن 90 كلمة (فصلان × مبحثان على الأقل)، حتى لو زاد عدد الصفحات قليلاً
+  s.body = Math.max(total - s.abstract - s.intro - s.conc, 90 * chapters * 2);
   return s;
 }
 
@@ -480,7 +482,7 @@ function steps_(job) {
 // إذا خالف النموذج المطلوب (مثلاً كتب فصلاً بدل قائمة المراجع) يُرفض الرد ويُطلب من نموذج آخر.
 function words_(t) { return String(t).split(/\s+/).filter(Boolean).length; }
 function checkLength_(t, target) {
-  if (words_(t) > Math.max(3 * target, target + 250)) throw new Error('الرد أطول بكثير من المطلوب');
+  if (words_(t) > Math.max(3 * target, target + 300)) throw new Error('الرد أطول بكثير من المطلوب');
   if (words_(t) < 0.3 * target) throw new Error('الرد أقصر بكثير من المطلوب');
 }
 function checkHeadings_(min) {
@@ -538,8 +540,9 @@ function runStep_(r, job) {
 
   if (name === 'outline') {
     const n = sz.chapters;
+    const secs = r.pages <= 8 ? 'مبحثان' : '2 إلى 3 مباحث';
     const text = write('ضع خطة البحث: عنواناً نهائياً دقيقاً (حسّن العنوان المقترح إن لزم)، و' + n +
-      ' فصول، لكل فصل 2 إلى 3 مباحث. يكون الفصل الأول إطاراً نظرياً ومفاهيمياً، وتتدرج الفصول التالية نحو التحليل ' +
+      ' فصول، لكل فصل ' + secs + '. يكون الفصل الأول إطاراً نظرياً ومفاهيمياً، وتتدرج الفصول التالية نحو التحليل ' +
       'والتطبيق أو الدراسات السابقة بحسب طلب الطالب. اجعل العناوين دقيقة وأكاديمية وقصيرة ومن دون ترقيم. ' +
       'لا تُدرج المقدمة أو الخاتمة أو المراجع ضمن الفصول.\n' +
       'أجب بكائن JSON فقط بهذا الشكل: {"title": "...", "chapters": [{"title": "...", "sections": ["...", "..."]}]}',
@@ -564,7 +567,7 @@ function runStep_(r, job) {
     const i = Number(name.split(':')[1]);
     const ch = job.outline.chapters[i];
     const nSec = job.outline.chapters.reduce(function (a, c) { return a + c.sections.length; }, 0);
-    const per = Math.round(sz.body / nSec);
+    const per = Math.max(80, Math.round(sz.body / nSec));
     const text = write(P + 'اكتب الآن متن الفصل ' + (i + 1) + ': «' + ch.title + '» كاملاً. ابدأ بفقرة تمهيدية قصيرة للفصل، ' +
       'ثم اكتب كل مبحث تحت سطر عنوان يبدأ بعلامتي ## متبوعتين باسم المبحث كما هو بالضبط، بهذا الترتيب:\n' +
       ch.sections.map(function (sec) { return '## ' + sec; }).join('\n') + '\n' +
