@@ -6,6 +6,7 @@ on:
     paths:
       - .github/workflows/check-backend.yml
       - .github/apps-script-url
+      - .github/check-trigger
   workflow_dispatch:
 
 jobs:
