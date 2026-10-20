@@ -30,6 +30,9 @@ const srv = http.createServer((req, res) => {
   await p.selectOption('#governorate', 'بغداد');
   for (const [k, v] of [['university', 'جامعة بغداد'], ['college', 'كلية التربية'], ['department', 'قسم الحاسبات'], ['supervisor', 'د. سارة']]) await p.fill('#' + k, v);
   await p.click('#next'); await p.fill('#title', 'أثر التعلم الإلكتروني'); await p.fill('#details', 'فصل نظري وفصل تطبيقي');
+  await p.click('.chip[data-v="20"]'); console.log('plus disabled at max:', await p.isDisabled('.pgbtn[data-d="1"]'));
+  await p.click('.pgbtn[data-d="-1"]'); await p.click('.pgbtn[data-d="-1"]'); console.log('pages now:', await p.textContent('#pv'));
+  await p.locator('.f:has(.pgpick)').screenshot({ path: OUT + '/site-pages.png' });
   await p.click('#next'); await p.click('#next'); await p.waitForSelector('#done:not([hidden])', { timeout: 5000 });
   console.log('submitted:', JSON.stringify(lastSubmit).slice(0, 80), '| order shown:', await p.textContent('#oid'));
   await p.goto(url + '?track=23'); await p.waitForTimeout(500);
