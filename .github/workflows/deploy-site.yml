@@ -1,6 +1,6 @@
 # ينشر واجهة الطالب (docs/) على GitHub Pages، ويربطها برابط الخلفية (Apps Script) تلقائياً.
 # يتطلب مرة واحدة: Settings ← Pages ← Source: GitHub Actions.
-# رابط الخلفية يُبنى من السر DEPLOYMENT_ID، أو من المتغير API_URL إن وُجد.
+# رابط الخلفية: المتغير API_URL، أو الملف .github/apps-script-url، أو يُبنى من السر DEPLOYMENT_ID.
 name: Deploy student site
 on:
   push:
@@ -8,6 +8,7 @@ on:
     paths:
       - docs/**
       - .github/workflows/deploy-site.yml
+      - .github/apps-script-url
   workflow_dispatch:
 
 permissions:
@@ -26,7 +27,7 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Build site
         env:
@@ -34,6 +35,8 @@ jobs:
           API_URL: ${{ vars.API_URL }}
         run: |
           URL="$API_URL"
+          # بديل لا يحتاج أسراراً: رابط تطبيق الويب محفوظ في المستودع (ليس سرياً، فهو رابط المنصة القديم نفسه)
+          if [ -z "$URL" ] && [ -s .github/apps-script-url ]; then URL="$(tr -d '[:space:]' < .github/apps-script-url)"; fi
           if [ -z "$URL" ]; then
             ID="$(echo "$DEPLOYMENT_ID" | tr -d '[:space:]')"
             if [ -z "$ID" ]; then
