@@ -392,7 +392,13 @@ function kick_() {
     cache.put('kicked', '1', 300);
     if (nextJobId_() === null) return;
     ensureWatchdog_();
-    const pending = ScriptApp.getProjectTriggers().some(function (t) { return t.getHandlerFunction() === 'processJobs'; });
+    // مشغّل مجدول فعلاً (وليس مشغّلاً قديماً انتهى موعده)؟
+    let map = {};
+    try { map = JSON.parse(props_().getProperty('SCHEDULED') || '{}'); } catch (e) { map = {}; }
+    const now = Date.now();
+    const pending = ScriptApp.getProjectTriggers().some(function (t) {
+      return t.getHandlerFunction() === 'processJobs' && map[t.getUniqueId()] > now - 2 * 60 * 1000;
+    });
     if (!pending) scheduleNext_(1);
   } catch (e) {
     console.warn('kick: ' + e);
