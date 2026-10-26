@@ -6,29 +6,31 @@ const sheet={ appendRow:r=>rows.push(r.slice()), getLastRow:()=>rows.length, set
   getRange:(r,c,nr,nc)=>({ getValues:()=>{const o=[];for(let i=0;i<(nr||1);i++){o.push(rows[r-1+i].slice(c-1,c-1+(nc||1)))}return o;},
     setValue:v=>{rows[r-1][c-1]=v;}, setValues:v=>{if(!rows[r-1])rows[r-1]=[];v[0].forEach((x,i)=>rows[r-1][c-1+i]=x)} }) };
 function mkFile(name,data){const f={name,data,trashed:false,getBlob:()=>({getDataAsString:()=>f.data}),setContent:d=>{f.data=d},setTrashed:t=>{f.trashed=t;delete files[name]},moveTo(){},
-  getAs:()=>({setName:n=>({name:n,type:'pdf'})})};files[name]=f;return f;}
-const folder={getFilesByName:n=>{const f=files[n];let done=!f;return{hasNext:()=>!done,next:()=>{done=true;return f}}},createFile:(n,d)=>mkFile(n,d),getId:()=>'F'};
+  getAs:()=>({setName:n=>({name:n,type:'pdf'})}),setSharing(){f.shared=true},getId:()=>name};files[name]=f;return f;}
+const folder={getFilesByName:n=>{const f=files[n];let done=!f;return{hasNext:()=>!done,next:()=>{done=true;return f}}},createFile:(n,d)=>typeof n==='string'?mkFile(n,d):mkFile(n.name,n),getId:()=>'F'};
 let docLog=[];
 function para(kind){const p={kind,text:'',setSpacingBefore:()=>p,setSpacingAfter:()=>p,editAsText:()=>({setBold:()=>p}),appendText:t=>{p.text+=t;return{setBold:b=>{if(b)p.bold=true}}},setHeading:h=>{p.h=h;return p},setAttributes:()=>p,setLeftToRight:v=>{p.ltr=v;return p},
   setAlignment:a=>p,setGlyphType:()=>p,setIndentFirstLine:()=>p,setIndentStart:()=>p,getType:()=>'P',asParagraph:()=>p,getText:()=>p.text,removeFromParent:()=>{docLog.shift()}};docLog.push(p);return p;}
 const g={
   Logger:{log:console.log}, console,
-  PropertiesService:{getScriptProperties:()=>({getProperties:()=>props,getProperty:k=>props[k]||null,setProperty:(k,v)=>{props[k]=v}})},
+  PropertiesService:{getScriptProperties:()=>({getProperties:()=>props,getProperty:k=>props[k]||null,setProperty:(k,v)=>{props[k]=v},deleteProperty:k=>{delete props[k]}})},
   SpreadsheetApp:{create:()=>({getSheets:()=>[sheet],getId:()=>'SS',getUrl:()=>'url'}),openById:()=>({getSheets:()=>[sheet],getUrl:()=>'url'})},
-  DriveApp:{createFolder:()=>folder,getFolderById:()=>folder,getFileById:id=>id==='DOC'?mkFile('doc'):{moveTo(){}}},
+  DriveApp:{Access:{ANYONE_WITH_LINK:1},Permission:{VIEW:1},createFolder:()=>folder,getFolderById:()=>folder,getFileById:id=>id==='DOC'?mkFile('doc'):(files[id]?{getBlob:()=>({name:id}),moveTo(){}}:{moveTo(){}})},
   Utilities:{formatDate:(d)=>d.toISOString().slice(0,10).replace(/-/g,'/'),getUuid:()=>crypto.randomUUID(),computeHmacSha256Signature:(v,k)=>[...crypto.createHmac('sha256',k).update(v).digest()],
     base64EncodeWebSafe:b=>Buffer.from(b).toString('base64url')},
   Session:{getEffectiveUser:()=>({getEmail:()=>'admin@x.com'})},
   ScriptApp:{getService:()=>({getUrl:()=>'https://script.google.com/macros/s/X/exec'}),getProjectTriggers:()=>triggers,deleteTrigger:t=>triggers.splice(triggers.indexOf(t),1),
-    newTrigger:fn=>({timeBased:()=>({after:ms=>({create:()=>triggers.push({fn,ms,getHandlerFunction:()=>fn})}),everyMinutes:m=>({create:()=>{}})})}),getOAuthToken:()=>'tok'},
+    newTrigger:fn=>({timeBased:()=>({after:ms=>({create:()=>{const u='T'+Math.random();const t={fn,ms,getHandlerFunction:()=>fn,getUniqueId:()=>u};triggers.push(t);return t}}),everyMinutes:m=>({create:()=>{}})})}),getOAuthToken:()=>'tok'},
   LockService:{getScriptLock:()=>({waitLock(){},tryLock:()=>true,releaseLock(){}})},
   CacheService:{getScriptCache:()=>({get:k=>cache[k]||null,put:(k,v)=>{cache[k]=v}})},
-  MailApp:{sendEmail:o=>mails.push(o)},
+  MailApp:{sendEmail:o=>{if(g.quota<=0)throw new Error('Service invoked too many times: email');g.quota--;mails.push(o)},getRemainingDailyQuota:()=>g.quota},
+  GmailApp:{getAliases:()=>['platform@x.com'],sendEmail:(to,subject,b,o)=>{if(g.quota<=0)throw new Error('quota');g.quota--;mails.push(Object.assign({to,subject},o))}},
+  quota:100,
   ContentService:{MimeType:{JSON:'json'},createTextOutput:t=>({text:t,setMimeType(){return this}})},
   HtmlService:{XFrameOptionsMode:{ALLOWALL:1},createHtmlOutput:h=>({html:h,setTitle(){return this},addMetaTag(){return this},setXFrameOptionsMode(){return this}})},
   DocumentApp:{create:()=>{docLog=[];para('first');return{getBody:()=>body,saveAndClose(){},getId:()=>'DOC',getUrl:()=>'docurl'}},
     Attribute:{},HorizontalAlignment:{},ParagraphHeading:{HEADING1:1,HEADING2:2,HEADING3:3},GlyphType:{},ElementType:{PARAGRAPH:'P'}},
-  UrlFetchApp:{fetch:(url,o)=>{
+  UrlFetchApp:{fetchAll:reqs=>reqs.map(q=>g.UrlFetchApp.fetch(q.url,q)),fetch:(url,o)=>{
     if(url.includes('export?format=docx')) return {getBlob:()=>({setName:n=>({name:n})})};
     const eng=url.includes('google')?'gemini':'groq'; fetches.push(eng);
     if(eng==='gemini' && fetches.filter(x=>x==='gemini').length===4) return {getResponseCode:()=>429,getContentText:()=>'rate'};
@@ -79,3 +81,17 @@ console.log('api broken body:', g.doPost({postData:{contents:'{bad'}}).text);
 console.log('api config:', g.doGet({parameter:{api:'config'}}).text);
 console.log('moved page:', g.doGet({parameter:{}}).html.includes('github.io/manhaj-'));
 console.log('health:', g.doGet({parameter:{api:'health'}}).text.slice(0,400));
+
+// ضغط: بحثان معاً، وحصة Gmail شبه منتهية، وإيميل المنصة كمرسل
+props.PLATFORM_EMAIL='platform@x.com'; g.loadConfig_(); g.quota=3; mails.length=0;
+const sub=()=>g.submitRequest({student_name:'سارة',email:'z@x.com',university:'ج',college:'ك',department:'ق',governorate:'البصرة',supervisor:'م',title:'الذكاء الاصطناعي',details:'تفاصيل',language:'ar',pages:'20'});
+const a=sub(), b=sub();
+const ap=id=>{const l=mails.find(m=>m.subject.includes('#'+id)).htmlBody.match(/href="([^"]*a=approve[^"]*)"/)[1];return g.reviewAction(id,'approve',new URL(l).searchParams.get('sig'))};
+console.log('stress submit', a.id, b.id, ap(a.id).slice(0,12), ap(b.id).slice(0,12));
+runs=0; while(triggers.length && runs<20){ triggers.length=0; g.processJobs(); runs++; }
+console.log('stress runs',runs,'statuses',rows.slice(1).map(r=>r[2]).join(','),'quota',g.quota,'retry',props.MAIL_RETRY);
+console.log('stress mails:',mails.map(m=>m.to+' | '+m.subject+' | from='+(m.from||'-')+' replyTo='+(m.replyTo||'-')));
+console.log('track while mail pending has files:', !!g.trackRequest(String(b.id),'z@x.com').files);
+g.quota=100; mails.length=0; g.watchdog();
+console.log('retry sent:', mails.map(m=>m.subject+' '+(m.attachments||[]).length), 'retry left:', JSON.stringify(props.MAIL_RETRY), 'err col:', JSON.stringify(rows[b.id][15]));
+console.log('leases left:', Object.keys(props).filter(k=>/^(LEASE|WAIT)_/.test(k)));

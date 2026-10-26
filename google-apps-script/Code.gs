@@ -36,9 +36,14 @@ const CONFIG = {
   MISTRAL_MODEL: 'mistral-large-latest',
   OPENROUTER_API_KEY: '',    // https://openrouter.ai/keys
   OPENROUTER_MODEL: 'deepseek/deepseek-chat-v3.1:free',
-  ADMIN_EMAIL: '',           // فارغ = إيميل حسابك في Google
+  // ----- إيميل المنصة -----
+  // PLATFORM_EMAIL: إيميل خاص بالمنصة (مثل manhaj.iq@gmail.com). تصله طلبات الطلبة وردودهم، ويظهر مرسلاً للإيميلات
+  // إذا أضفته في Gmail حسابك: الإعدادات ← الحسابات ← «إرسال بريد باسم». إن لم تضفه تُرسل من حسابك ويُرد عليه هو.
+  PLATFORM_EMAIL: '',
+  ADMIN_EMAIL: '',           // من تصله طلبات الموافقة. فارغ = إيميل المنصة، وإلا إيميل حسابك في Google
+  SENDER_NAME: 'منصة منهج',  // الاسم الظاهر للمرسل
   NOTIFY_ADMIN_DONE: false,  // إيميل لك عند إرسال كل بحث (معطّل لتوفير حصة Gmail اليومية)
-  REVIEW: false,             // مراجعة كل جزء بمحرك ثانٍ (تضاعف استهلاك الحصص المجانية)
+  MAX_WORKERS: 3,            // عدد البحوث التي تُكتب في الوقت نفسه
   MIN_PAGES: 5,
   MAX_PAGES: 20,
   PRICE_IQD: 10000,          // سعر البحث بالدينار العراقي (يظهر في الواجهة والإيميلات)
@@ -72,7 +77,11 @@ const GOVERNORATES = {
 // ===========================================================================
 
 const WORDS_PER_PAGE = 155;  // مقيس فعلياً بخط Amiri 14 وتباعد 1.5 على صفحة A4
-const STEP_BUDGET_MS = 4 * 60 * 1000;   // حد التنفيذ في Apps Script 6 دقائق؛ نترك هامشاً
+const STEP_BUDGET_MS = 3 * 60 * 1000;   // لا نبدأ خطوة جديدة بعد 3 دقائق (حد التنفيذ في Apps Script 6 دقائق)
+const WRITE_DEADLINE_MS = 4.5 * 60 * 1000;  // آخر وقت لجولة كتابة متوازية
+const LEASE_MS = 7 * 60 * 1000;          // حجز البحث لمنفّذ واحد (أطول من أقصى تنفيذ)
+const MAIL_RESERVE = 25;                 // نُبقي هذا العدد من حصة Gmail اليومية للإيميلات الضرورية فقط
+const JOB_V = 3;
 const MAX_ATTEMPTS = 8;
 const COLS = ['id', 'created', 'status', 'student_name', 'email', 'university', 'college', 'department',
               'specialization', 'supervisor', 'title', 'details', 'language', 'pages', 'engines', 'error', 'doc_url',
@@ -100,7 +109,7 @@ function setup() {
 }
 
 function props_() { return PropertiesService.getScriptProperties(); }
-function adminEmail_() { return CONFIG.ADMIN_EMAIL || Session.getEffectiveUser().getEmail(); }
+function adminEmail_() { return CONFIG.ADMIN_EMAIL || CONFIG.PLATFORM_EMAIL || Session.getEffectiveUser().getEmail(); }
 
 function sheet_() {
   const p = props_();
@@ -170,6 +179,7 @@ function doGet(e) {
   const p = (e && e.parameter) || {};
   if (p.api === 'config') { kick_(); return json_(publicConfig_()); }
   if (p.api === 'health') return json_(health_());
+  if (p.api === 'work') return json_(work_());
   const html = (p.id && p.a && p.sig) ? reviewPage_(p) : movedPage_();
   return HtmlService.createHtmlOutput(html)
     .setTitle('منصة منهج')
@@ -209,14 +219,18 @@ function health_() {
     out.counts[r.status] = (out.counts[r.status] || 0) + 1;
     if (r.status === 'approved' || r.status === 'generating') {
       const job = loadJob_(r.id) || {};
-      out.active.push({ id: r.id, status: r.status, pages: r.pages, step: job.step, total: job.outline ? steps_(job).length : null,
-                        waits: job.waits || 0, attempts: job.attempts || 0, v: job.v || 1, lastError: job.lastError || '' });
+      out.active.push({ id: r.id, status: r.status, pages: r.pages, step: job.step, progress: progress_(job),
+                        waits: job.waits || 0, attempts: job.attempts || 0, v: job.v || 1, leased: leased_(r.id),
+                        lastError: job.lastError || '' });
     }
     if (r.error) out.errors.push({ id: r.id, status: r.status, error: String(r.error).slice(0, 300) });
   });
   out.errors = out.errors.slice(-5);
   out.engines = engines_().map(function (e) { return e.name + (cache.get('cool_' + e.name) ? ' (انتظار)' : ''); });
   out.triggers = ScriptApp.getProjectTriggers().map(function (t) { return t.getHandlerFunction(); });
+  out.mailQuota = mailQuota_();
+  out.mailRetry = retryList_();
+  out.sender = sender_().from || 'account';
   return out;
 }
 
@@ -242,13 +256,30 @@ function trackRequest(id, email) {
     return { ok: false, error: 'لم نجد طلباً بهذا الرقم والبريد. تأكد منهما كما وصلا في إيميل التأكيد.' };
   }
   const stage = { pending: 1, approved: 2, generating: 2, failed: 2, sent: 4, rejected: -1 }[r.status];
-  let progress = 0;
-  if (r.status === 'generating' || r.status === 'approved') {
+  const out = { ok: true, id: r.id, title: r.title, stage: stage, progress: 0, rejected: r.status === 'rejected',
+                delayed: r.status === 'failed', created: Utilities.formatDate(new Date(r.created), 'Asia/Baghdad', 'yyyy/MM/dd') };
+  if (r.status === 'generating' || r.status === 'approved' || r.status === 'sent') {
     const job = loadJob_(r.id);
-    if (job && job.outline) progress = Math.round(100 * job.step / steps_(job).length);
+    if (job) {
+      out.progress = progress_(job);
+      if (job.waits >= 2) out.delayed = true;
+      if (r.status === 'sent' && job.files) { out.files = { pdf: dl_(job.files.pdf), docx: dl_(job.files.docx) }; out.mailed = !!job.mailed; }
+    }
   }
-  return { ok: true, id: r.id, title: r.title, stage: stage, progress: progress, rejected: r.status === 'rejected',
-           delayed: r.status === 'failed', created: Utilities.formatDate(new Date(r.created), 'Asia/Baghdad', 'yyyy/MM/dd') };
+  return out;
+}
+
+function dl_(fileId) { return 'https://drive.google.com/uc?export=download&id=' + fileId; }
+
+/** نسبة الإنجاز: الخطة 10%، والكتابة حتى 90%، ثم البناء والإرسال. */
+function progress_(job) {
+  if (!job) return 0;
+  if (job.finished) return 100;
+  const name = steps_(job)[job.step];
+  if (name === 'outline') return 3;
+  if (name === 'build') return 92;
+  const total = job.outline ? partKeys_(job).length : 1;
+  return Math.round(10 + 80 * Object.keys(job.done || {}).length / total);
 }
 
 function sign_(id, action) {
@@ -280,7 +311,7 @@ function submitRequest(d) {
   if (errors.length) return { ok: false, errors: errors };
 
   const lock = LockService.getScriptLock();
-  lock.waitLock(20000);
+  if (!lock.tryLock(25000)) return { ok: false, errors: ['المنصة مزدحمة الآن، أعد الإرسال بعد ثوانٍ.'] };
   let id;
   try {
     const sh = sheet_();
@@ -294,7 +325,11 @@ function submitRequest(d) {
   }
   try {
     mailAdminNew_(r);
-    mail_(r.email, 'استلمنا طلبك - منصة منهج',
+  } catch (e) {
+    console.error('تعذر إرسال إيميل الطلب للمدير: ' + e);
+  }
+  try {
+    lowMail_(r.email, 'استلمنا طلبك - منصة منهج',
       '<p>مرحباً ' + esc_(r.student_name) + '،</p><p>استلمنا طلبك لبحث بعنوان <b>«' + esc_(r.title) +
       '»</b> (رقم الطلب #' + id + '). سيُراجَع الطلب، وسيصلك إيميل بالنتيجة.</p>' +
       paymentHtml_(r) + '<p style="margin-top:14px">تابع حالة طلبك في أي وقت من <a href="' + publicUrl_() +
@@ -313,19 +348,25 @@ function reviewAction(id, action, sig, reason) {
   if (r.status !== 'pending' && r.status !== 'failed') return 'تمت معالجة هذا الطلب مسبقاً (' + STATUS[r.status] + ').';
   if (action === 'approve') {
     setReq_(id, { status: 'approved', error: '' });
-    saveJob_(id, { v: 2, step: 0, attempts: 0, waits: 0, parts: {}, engines: [] });
+    // عند إعادة الموافقة بعد فشل نكمل من حيث توقفنا ولا نعيد كتابة الأجزاء الجاهزة
+    const old = loadJob_(id);
+    const job = old && old.v === JOB_V && !old.finished ? old : newJob_();
+    job.attempts = 0; job.waits = 0; job.notBefore = 0;
+    saveJob_(id, job);
+    releaseJob_(id);
+    props_().deleteProperty('WAIT_' + id);
     scheduleNext_(1);
     ensureWatchdog_();
-    safeMail_(r.email, 'بدأنا كتابة بحثك - منصة منهج',
+    lowMail_(r.email, 'بدأنا كتابة بحثك - منصة منهج',
       '<p>مرحباً ' + esc_(r.student_name) + '،</p><p>تأكدنا من طلبك رقم <b>#' + id + '</b>، وبدأنا الآن كتابة بحثك بعنوان <b>«' +
-      esc_(r.title) + '»</b>.</p><p>يصلك البحث عادةً خلال ساعة على هذا البريد بملفي Word وPDF. يمكنك متابعة تقدّم الكتابة من ' +
+      esc_(r.title) + '»</b>.</p><p>يصلك البحث عادةً خلال دقائق على هذا البريد بملفي Word وPDF. يمكنك متابعة تقدّم الكتابة من ' +
       '<a href="' + publicUrl_() + '?track=' + id + '">صفحة متابعة الطلب</a>.</p>');
-    return 'تمت الموافقة ✓ يجري الآن إنشاء البحث (عدة دقائق)، وسيُرسل للطالب تلقائياً وتصلك رسالة عند الانتهاء.';
+    return 'تمت الموافقة ✓ يجري الآن إنشاء البحث (بضع دقائق)، وسيُرسل للطالب تلقائياً.';
   }
   if (action === 'reject') {
     setReq_(id, { status: 'rejected' });
     const why = String(reason || '').trim();
-    mail_(r.email, 'بخصوص طلبك - منصة منهج',
+    safeMail_(r.email, 'بخصوص طلبك - منصة منهج',
       '<p>مرحباً ' + esc_(r.student_name) + '،</p><p>نعتذر، لم تتم الموافقة على طلبك رقم #' + id +
       ' بعنوان «' + esc_(r.title) + '».</p>' + (why ? '<p><b>السبب:</b> ' + esc_(why) + '</p>' : ''));
     return 'تم رفض الطلب وإبلاغ الطالب ✓';
@@ -359,26 +400,94 @@ function kick_() {
 }
 
 function watchdog() {
+  retryMails_();
   if (nextJobId_() !== null) processJobs();
 }
 
+/** يُستدعى من صفحة متابعة الطالب أثناء الكتابة: يكتب في تنفيذ ويب (لا يُحسب من وقت المشغّلات اليومي). */
+function work_() {
+  const cache = CacheService.getScriptCache();
+  if (cache.get('worked')) return { ok: true, busy: true };
+  cache.put('worked', '1', 45);
+  if (nextJobId_() === null) return { ok: true, idle: true };
+  processJobs();
+  return { ok: true };
+}
+
+/**
+ * يجدول منفّذاً جديداً بعد seconds ثانية، بحد أقصى MAX_WORKERS منفّذين مجدولين.
+ * المشغّل يحذف نفسه عند بدء تنفيذه (dropFiredTrigger_)، وأي مشغّل فات موعده بكثير يُحذف هنا.
+ */
 function scheduleNext_(seconds) {
+  const p = props_(), now = Date.now();
+  let map = {};
+  try { map = JSON.parse(p.getProperty('SCHEDULED') || '{}'); } catch (e) { map = {}; }
+  let live = 0;
   ScriptApp.getProjectTriggers().forEach(function (t) {
-    if (t.getHandlerFunction() === 'processJobs') ScriptApp.deleteTrigger(t);
+    if (t.getHandlerFunction() !== 'processJobs') return;
+    const at = map[t.getUniqueId()];
+    if (!at || at < now - 5 * 60 * 1000) { ScriptApp.deleteTrigger(t); delete map[t.getUniqueId()]; } else live++;
   });
-  ScriptApp.newTrigger('processJobs').timeBased().after(Math.max(1, seconds) * 1000).create();
+  if (live < CONFIG.MAX_WORKERS) {
+    const ms = Math.max(1, seconds) * 1000;
+    const t = ScriptApp.newTrigger('processJobs').timeBased().after(ms).create();
+    map[t.getUniqueId()] = now + ms;
+  }
+  Object.keys(map).forEach(function (k) { if (map[k] < now - 10 * 60 * 1000) delete map[k]; });
+  p.setProperty('SCHEDULED', JSON.stringify(map));
+}
+
+function dropFiredTrigger_(e) {
+  if (!e || !e.triggerUid) return;
+  ScriptApp.getProjectTriggers().forEach(function (t) {
+    if (t.getUniqueId() === e.triggerUid) ScriptApp.deleteTrigger(t);
+  });
+}
+
+function activeIds_() {
+  const sh = sheet_();
+  const n = sh.getLastRow() - 1;
+  if (n < 1) return [];
+  const statuses = sh.getRange(2, COLS.indexOf('status') + 1, n, 1).getValues();
+  const ids = [];
+  for (let i = 0; i < n; i++) {
+    if (statuses[i][0] === 'approved' || statuses[i][0] === 'generating') ids.push(i + 1);
+  }
+  return ids;
 }
 
 function nextJobId_() {
-  const sh = sheet_();
-  const n = sh.getLastRow() - 1;
-  if (n < 1) return null;
-  const statuses = sh.getRange(2, COLS.indexOf('status') + 1, n, 1).getValues();
-  for (let i = 0; i < n; i++) {
-    if (statuses[i][0] === 'approved' || statuses[i][0] === 'generating') return i + 1;
-  }
-  return null;
+  const ids = activeIds_();
+  return ids.length ? ids[0] : null;
 }
+
+// ----- الحجز: كل بحث يكتبه منفّذ واحد فقط، وعدة بحوث تُكتب في الوقت نفسه -----
+function leased_(id) { return (+props_().getProperty('LEASE_' + id) || 0) > Date.now(); }
+
+/** يحجز أقدم بحث غير محجوز وغير منتظر؛ القفل يُمسك لحظات فقط فلا يعطّل إرسال الطلبات. */
+function claimJob_() {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(10000)) return null;
+  try {
+    const p = props_(), all = p.getProperties(), now = Date.now();
+    const busy = Object.keys(all).filter(function (k) { return k.indexOf('LEASE_') === 0 && +all[k] > now; }).length;
+    if (busy >= CONFIG.MAX_WORKERS) return null;
+    const ids = activeIds_();
+    for (let i = 0; i < ids.length; i++) {
+      if (+all['LEASE_' + ids[i]] > now) continue;
+      if (+all['WAIT_' + ids[i]] > now) continue;  // ينتظر تجدد الحصة
+      p.setProperty('LEASE_' + ids[i], String(now + LEASE_MS));
+      return ids[i];
+    }
+    return null;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function releaseJob_(id) { props_().deleteProperty('LEASE_' + id); }
+
+function newJob_() { return { v: JOB_V, step: 0, attempts: 0, waits: 0, parts: {}, done: {}, engines: [] }; }
 
 /** هل فشلت كل المحركات بسبب الحصة المجانية فقط (وليس لخطأ آخر)؟ */
 function isQuotaError_(e) {
@@ -389,57 +498,74 @@ function isQuotaError_(e) {
   });
 }
 
-function processJobs() {
-  const lock = LockService.getScriptLock();
-  if (!lock.tryLock(5000)) return;
+function processJobs(e) {
+  dropFiredTrigger_(e);
   const start = Date.now();
-  let waitSeconds = 0;
-  try {
-    let id;
-    while ((id = nextJobId_()) !== null && Date.now() - start < STEP_BUDGET_MS) {
-      const r = getReq_(id);
-      let job = loadJob_(id);
-      if (!job || job.v !== 2) job = { v: 2, step: 0, attempts: 0, waits: 0, parts: {}, engines: [] };
-      if (r.status === 'approved') setReq_(id, { status: 'generating' });
-      try {
-        const finished = runStep_(r, job);
-        job.attempts = 0;
-        saveJob_(id, job);
-        if (finished) {
-          setReq_(id, { status: 'sent', engines: job.engines.join('، '), doc_url: job.docUrl });
-          if (CONFIG.NOTIFY_ADMIN_DONE) safeMail_(adminEmail_(), 'تم الإرسال: طلب #' + id,
-            '<p>✓ تم إنشاء البحث #' + id + ' «' + esc_(r.title) + '» وإرساله إلى ' + esc_(r.email) + '.</p>' +
-            '<p>المحركات المستخدمة: ' + esc_(job.engines.join('، ')) + '</p><p><a href="' + job.docUrl + '">فتح البحث</a></p>');
-          const f = jobFile_(id);
-          if (f) f.setTrashed(true);
-        }
-      } catch (e) {
-        // نفاد الحصة المجانية ليس فشلاً: ننتظر تجددها (حتى نحو 24 ساعة) بدل إلغاء البحث
-        const quota = isQuotaError_(e);
-        if (quota) job.waits = (job.waits || 0) + 1; else job.attempts = (job.attempts || 0) + 1;
-        job.lastError = String(e).slice(0, 400);
-        saveJob_(id, job);
-        console.warn('طلب #' + id + ' الخطوة ' + job.step + (quota ? ' انتظار الحصة ' + job.waits : ' محاولة ' + job.attempts) + ': ' + e);
-        if (quota && job.waits === 2) {
-          safeMail_(adminEmail_(), 'تأخير: طلب #' + id,
-            '<p>نفدت حصة الذكاء الاصطناعي المجانية مؤقتاً أثناء كتابة البحث #' + id + ' «' + esc_(r.title) + '».</p>' +
-            '<p>ستُكمل المنصة الكتابة تلقائياً عند تجدد الحصة، ولا تحتاج لفعل شيء.</p>');
-        }
-        if (job.attempts >= MAX_ATTEMPTS || job.waits >= 150) {
-          setReq_(id, { status: 'failed', error: String(e).slice(0, 1500) });
-          safeMail_(adminEmail_(), 'فشل: طلب #' + id,
-            '<p>✗ فشل إنشاء البحث #' + id + ' «' + esc_(r.title) + '».</p><pre dir="ltr">' + esc_(String(e)) + '</pre>' +
-            '<p>لإعادة المحاولة افتح رابط الموافقة من إيميل الطلب مرة أخرى.</p>');
-        } else {
-          waitSeconds = quota ? Math.min(90 * job.waits, 600) : 90;
-          break;
-        }
-      }
-    }
-  } finally {
-    lock.releaseLock();
+  let wait = 0, id;
+  while (Date.now() - start < STEP_BUDGET_MS && (id = claimJob_()) !== null) {
+    try { wait = workOn_(id, start); } finally { releaseJob_(id); }
+    if (wait) break;
   }
-  if (nextJobId_() !== null) scheduleNext_(waitSeconds || 5);
+  // البحوث المحجوزة يجدول منفّذها ما بعدها؛ نجدول للبقية: فوراً، أو عند أقرب موعد انتظار
+  const p = props_().getProperties(), now = Date.now();
+  const free = activeIds_().filter(function (x) { return !(+p['LEASE_' + x] > now); });
+  if (free.length) {
+    const waits = free.map(function (x) { return Math.max(0, ((+p['WAIT_' + x] || 0) - now) / 1000); });
+    scheduleNext_(Math.max(5, Math.min.apply(null, waits)));
+  }
+}
+
+/** يكتب بحثاً واحداً حتى ينتهي أو تنفد مدة التنفيذ؛ يعيد عدد ثواني الانتظار عند الخطأ. */
+function workOn_(id, start) {
+  const r = getReq_(id);
+  let job = loadJob_(id);
+  if (!job || job.v !== JOB_V) job = newJob_();
+  if (r.status === 'approved') setReq_(id, { status: 'generating' });
+  try {
+    while (Date.now() - start < STEP_BUDGET_MS) {
+      const finished = runStep_(r, job, start);
+      job.attempts = 0;
+      job.lastError = '';
+      saveJob_(id, job);
+      if (finished) { finish_(r, job); return 0; }
+    }
+    return 0;
+  } catch (err) {
+    // نفاد الحصة المجانية ليس فشلاً: ننتظر تجددها (حتى نحو 24 ساعة) بدل إلغاء البحث
+    const quota = isQuotaError_(err);
+    if (quota) job.waits = (job.waits || 0) + 1; else job.attempts = (job.attempts || 0) + 1;
+    job.lastError = String(err).slice(0, 400);
+    saveJob_(id, job);
+    console.warn('طلب #' + id + ' الخطوة ' + job.step + (quota ? ' انتظار الحصة ' + job.waits : ' محاولة ' + job.attempts) + ': ' + err);
+    if (quota && job.waits === 3) {
+      lowMail_(adminEmail_(), 'تأخير: طلب #' + id,
+        '<p>نفدت حصة الذكاء الاصطناعي المجانية مؤقتاً أثناء كتابة البحث #' + id + ' «' + esc_(r.title) + '».</p>' +
+        '<p>ستُكمل المنصة الكتابة تلقائياً عند تجدد الحصة، ولا تحتاج لفعل شيء. إضافة مفاتيح محركات أخرى تمنع هذا التأخير.</p>');
+    }
+    if (job.attempts >= MAX_ATTEMPTS || job.waits >= 150) {
+      setReq_(id, { status: 'failed', error: String(err).slice(0, 1500) });
+      safeMail_(adminEmail_(), 'فشل: طلب #' + id,
+        '<p>✗ فشل إنشاء البحث #' + id + ' «' + esc_(r.title) + '».</p><pre dir="ltr">' + esc_(String(err)) + '</pre>' +
+        '<p>لإعادة المحاولة افتح رابط الموافقة من إيميل الطلب مرة أخرى (تُكمل الكتابة من حيث توقفت).</p>');
+      return 0;
+    }
+    const wait = quota ? Math.min(60 * job.waits, 900) : 60;
+    props_().setProperty('WAIT_' + id, String(Date.now() + wait * 1000));
+    return quota ? wait : 0;
+  }
+}
+
+function finish_(r, job) {
+  const id = r.id;
+  setReq_(id, { status: 'sent', engines: job.engines.join('، '), doc_url: job.docUrl,
+                error: job.mailed ? '' : 'البحث جاهز ولم يُرسل الإيميل بعد (حد Gmail اليومي)، سيُرسل تلقائياً' });
+  if (!job.mailed) addRetry_(id);
+  if (CONFIG.NOTIFY_ADMIN_DONE) lowMail_(adminEmail_(), 'تم الإرسال: طلب #' + id,
+    '<p>✓ تم إنشاء البحث #' + id + ' «' + esc_(r.title) + '» وإرساله إلى ' + esc_(r.email) + '.</p>' +
+    '<p>المحركات المستخدمة: ' + esc_(job.engines.join('، ')) + '</p><p><a href="' + job.docUrl + '">فتح البحث</a></p>');
+  // نُبقي من المهمة روابط الملفات فقط (لصفحة المتابعة وإعادة الإرسال)
+  saveJob_(id, { v: JOB_V, finished: true, files: job.files, mailed: job.mailed, engines: job.engines });
+  props_().deleteProperty('WAIT_' + id);
 }
 
 // ----------------------------- كتابة البحث -----------------------------
@@ -466,17 +592,7 @@ function plan_(job) {
   return lines.join('\n');
 }
 
-function steps_(job) {
-  const list = ['outline', 'abstract', 'intro'];
-  if (CONFIG.REVIEW) list.push('review:intro');
-  if (job.outline) {
-    job.outline.chapters.forEach(function (ch, i) {
-      list.push('ch:' + i);
-      if (CONFIG.REVIEW) ch.sections.forEach(function (_, j) { list.push('review:sec:' + i + ':' + j); });
-    });
-  }
-  return list.concat(['conclusion', 'references', 'build']);
-}
+function steps_(job) { return ['outline', 'write', 'build']; }
 
 // ----------------------------- فحص جودة كل جزء -----------------------------
 // إذا خالف النموذج المطلوب (مثلاً كتب فصلاً بدل قائمة المراجع) يُرفض الرد ويُطلب من نموذج آخر.
@@ -529,115 +645,186 @@ function checkReferences_(t) {
 }
 
 /** ينفذ خطوة واحدة؛ يعيد true عند انتهاء البحث وإرساله. */
-function runStep_(r, job) {
+function runStep_(r, job, start) {
   const name = steps_(job)[job.step];
-  const sz = sizes_(r);
-  const P = job.outline ? 'خطة البحث:\n' + plan_(job) + '\n\n' : '';
-  const write = function (prompt, opts) {
-    const out = callEngine_(system_(r), prompt, opts || {});
-    if (job.engines.indexOf(out.engine) < 0) job.engines.push(out.engine);
-    return out.text;
-  };
-
   if (name === 'outline') {
-    const n = sz.chapters;
+    const n = sizes_(r).chapters;
     const secs = r.pages <= 8 ? 'مبحثان' : '2 إلى 3 مباحث';
-    const text = write('ضع خطة البحث: عنواناً نهائياً دقيقاً (حسّن العنوان المقترح إن لزم)، و' + n +
+    const out = callEngine_(system_(r), 'ضع خطة البحث: عنواناً نهائياً دقيقاً (حسّن العنوان المقترح إن لزم)، و' + n +
       ' فصول، لكل فصل ' + secs + '. يكون الفصل الأول إطاراً نظرياً ومفاهيمياً، وتتدرج الفصول التالية نحو التحليل ' +
       'والتطبيق أو الدراسات السابقة بحسب طلب الطالب. اجعل العناوين دقيقة وأكاديمية وقصيرة ومن دون ترقيم. ' +
       'لا تُدرج المقدمة أو الخاتمة أو المراجع ضمن الفصول.\n' +
       'أجب بكائن JSON فقط بهذا الشكل: {"title": "...", "chapters": [{"title": "...", "sections": ["...", "..."]}]}',
       { json: true, validate: parseOutline_ });
-    job.outline = parseOutline_(text);
-  } else if (name === 'abstract') {
-    job.parts.abstract = write(P + 'اكتب مستخلص البحث في نحو ' + sz.abstract + ' كلمة في فقرة واحدة متماسكة دون عنوان: ' +
-      'موضوع البحث وأهميته، ثم هدفه، ثم منهجه، ثم أبرز ما توصل إليه. ثم اكتب في سطر مستقل: ' +
-      (r.language === 'ar' ? '**الكلمات المفتاحية:** ' : '**Keywords:** ') + 'تليها 4 إلى 6 كلمات مفتاحية مفصولة بفواصل.',
-      { validate: checkAbstract_(sz.abstract) });
-    job.parts.abstract = cleanAbstract_(job.parts.abstract);
-  } else if (name === 'intro') {
-    const parts = r.pages <= 10
-      ? 'مشكلة البحث، أهمية البحث، أهداف البحث، منهج البحث'
-      : 'مشكلة البحث (مع صياغة تساؤلاته)، أهمية البحث (النظرية والتطبيقية)، أهداف البحث، حدود البحث (الموضوعية، ' +
-        'والمكانية: ' + r.governorate + '، والزمانية: العام الدراسي الحالي)، منهج البحث، تحديد المصطلحات (مصطلحان أو ثلاثة لغةً واصطلاحاً)';
-    job.parts.intro = write(P + 'اكتب مقدمة البحث في نحو ' + sz.intro + ' كلمة: فقرة تمهيدية تعرض الموضوع وسياقه، ثم العناصر ' +
-      'الآتية بالترتيب، كل عنصر تحت عنوان فرعي ### مسبوق بالترتيب الوصفي (' +
-      (r.language === 'ar' ? 'أولاً: ، ثانياً: ، ...' : 'First: , Second: , ...') + '): ' + parts + '.',
-      { validate: function (t) { checkHeadings_(3)(t); checkLength_(t, sz.intro); } });
-  } else if (name.indexOf('ch:') === 0) {
-    const i = Number(name.split(':')[1]);
-    const ch = job.outline.chapters[i];
-    const nSec = job.outline.chapters.reduce(function (a, c) { return a + c.sections.length; }, 0);
-    const per = Math.max(80, Math.round(sz.body / nSec));
-    const text = write(P + 'اكتب الآن متن الفصل ' + (i + 1) + ': «' + ch.title + '» كاملاً. ابدأ بفقرة تمهيدية قصيرة للفصل، ' +
-      'ثم اكتب كل مبحث تحت سطر عنوان يبدأ بعلامتي ## متبوعتين باسم المبحث كما هو بالضبط، بهذا الترتيب:\n' +
-      ch.sections.map(function (sec) { return '## ' + sec; }).join('\n') + '\n' +
-      'في نحو ' + per + ' كلمة لكل مبحث. داخل المبحث يمكنك استخدام عناوين فرعية ### مسبوقة بالترتيب الوصفي (أولاً، ثانياً...). ' +
-      'لا تكتب عنوان الفصل، ولا مباحث غير المذكورة، ولا خلاصة عامة للبحث.',
-      { validate: function (t) { splitChapter_(t, ch.sections.length); checkLength_(t, per * ch.sections.length); } });
-    splitChapter_(text, ch.sections.length).forEach(function (part, j) { job.parts['sec:' + i + ':' + j] = part; });
-  } else if (name.indexOf('sec:') === 0) {
-    const ij = name.split(':').slice(1).map(Number);
-    const ch = job.outline.chapters[ij[0]];
-    const nSec = job.outline.chapters.reduce(function (a, c) { return a + c.sections.length; }, 0);
-    const words = Math.round(sz.body / nSec);
-    const opening = ij[1] === 0 ? 'ابدأ بفقرة تمهيدية قصيرة للفصل، ثم ' : '';
-    job.parts[name] = write(P + 'نكتب الآن الفصل ' + (ij[0] + 1) + ': «' + ch.title + '». ' + opening +
-      'اكتب متن المبحث «' + ch.sections[ij[1]] + '» في نحو ' + words + ' كلمة. لا تكتب عنوان المبحث ولا عنوان الفصل ' +
-      '(سيُضافان تلقائياً)، وابدأ بالمتن مباشرة. يمكنك تقسيم المبحث إلى عناوين فرعية ### مسبوقة بالترتيب الوصفي ' +
-      '(أولاً، ثانياً...) إن احتاج ذلك. لا تكتب مباحث أخرى ولا خلاصة عامة للبحث.',
-      { validate: function (t) { checkLength_(t, words); } });
-  } else if (name.indexOf('review:') === 0) {
-    const key = name.slice(7);
-    job.parts[key] = review_(r, job.parts[key], job);
-  } else if (name === 'conclusion') {
-    const ar = r.language === 'ar';
-    const heads = ar ? ['### أولاً: الاستنتاجات', '### ثانياً: التوصيات', '### ثالثاً: المقترحات']
-                     : ['### First: Conclusions', '### Second: Recommendations', '### Third: Suggestions for Future Research'];
-    job.parts.conclusion = write(P + 'اكتب خاتمة البحث في نحو ' + sz.conc + ' كلمة تحت العناوين الآتية بالترتيب: ' +
-      (r.pages <= 10 ? heads.slice(0, 2) : heads).join(' ، ') + '. اكتب تحت كل عنوان نقاطاً مرقمة (1- ، 2- ...)، ' +
-      'كل نقطة جملة أو جملتان دقيقتان مستخلصتان مما ورد في الفصول، والتوصيات موجهة إلى جهات محددة.',
-      { validate: function (t) { checkHeadings_(2)(t); checkLength_(t, sz.conc); } });
-  } else if (name === 'references') {
-    job.parts.references = write(P + 'اكتب قائمة المصادر والمراجع بأسلوب APA (' + sz.refs + ' مراجع تقريباً)، ' +
-      (r.language === 'ar'
-        ? 'تحت عنوانين: ### أولاً: المصادر العربية ثم ### ثانياً: المصادر الأجنبية، كل قسم مرتب أبجدياً، '
-        : 'in one list ordered alphabetically by author, ') +
-      'كل مرجع في سطر يبدأ بـ "- ". تشمل المراجع التي وثّقتها في متن البحث. أدرج فقط مراجع حقيقية منشورة أنت واثق ' +
-      'من وجودها وبياناتها، ولا تضع أرقام DOI أو روابط إلا إذا كنت متأكداً منها تماماً. اكتب القائمة فقط دون أي تعليق.',
-      { validate: checkReferences_ });
-    job.parts.references = cleanReferences_(job.parts.references);
+    if (job.engines.indexOf(out.engine) < 0) job.engines.push(out.engine);
+    job.outline = parseOutline_(out.text);
+  } else if (name === 'write') {
+    if (!writeAll_(r, job, start + WRITE_DEADLINE_MS)) return false;  // بقيت أجزاء: نكملها في التنفيذ التالي
   } else if (name === 'build') {
     const files = buildDocs_(r, job);
     job.docUrl = files.url;
-    mail_(r.email, 'بحثك جاهز: ' + r.title,
-      '<p>مرحباً ' + esc_(r.student_name) + '،</p><p>نرفق لك بحثك بعنوان <b>«' + esc_(r.title) + '»</b> بنسختين: ' +
-      '<b>Word</b> (قابلة للتعديل) و<b>PDF</b> (جاهزة للطباعة).</p><p>ننصحك بمراجعته جيداً، والتحقق من المصادر والمراجع ' +
-      'قبل التسليم، وتعديله بما يناسب متطلبات قسمك ومشرفك.</p><p>بالتوفيق!</p>', [files.docx, files.pdf]);
+    job.files = saveFiles_([files.pdf, files.docx]);
+    job.mailed = sendReady_(r, job, [files.docx, files.pdf]);
     job.step++;
+    job.finished = true;
     return true;
   }
   job.step++;
   return false;
 }
 
-function review_(r, text, job) {
-  if (!text) return text;
-  const prompt = 'فيما يلي جزء من البحث. راجعه مراجعة أكاديمية ولغوية دقيقة:\n' +
-    '- صحّح الأخطاء اللغوية والنحوية والإملائية، وحسّن الترابط بين الفقرات.\n' +
-    '- احذف التكرار والحشو والعبارات الإنشائية الجاهزة، وأعد صياغة أي جملة تبدو منقولة أو نمطية بأسلوب أصيل.\n' +
-    '- حافظ على كل الأفكار والعناوين (###) والتوثيقات كما هي، ولا تختصر المحتوى ولا تضف مصادر جديدة.\n' +
-    'أعد النص الكامل بعد التحسين فقط، دون أي تعليق.\n\n---\n' + text;
+/** يحفظ ملفي PDF وWord في مجلد المنصة ويتيح تحميلهما بالرابط (لصفحة المتابعة). */
+function saveFiles_(blobs) {
+  const ids = blobs.map(function (b) {
+    const f = folder_().createFile(b);
+    try { f.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW); } catch (e) { console.warn('مشاركة الملف: ' + e); }
+    return f.getId();
+  });
+  return { pdf: ids[0], docx: ids[1] };
+}
+
+function sendReady_(r, job, attachments) {
   try {
-    const out = callEngine_(system_(r), prompt, {
-      start: 1,
-      validate: function (t) { if (t.length < 0.85 * text.length) throw new Error('المراجعة اختصرت النص'); },
-    });
-    if (job.engines.indexOf(out.engine) < 0) job.engines.push(out.engine);
-    return out.text;
+    mail_(r.email, 'بحثك جاهز: ' + r.title,
+      '<p>مرحباً ' + esc_(r.student_name) + '،</p><p>نرفق لك بحثك بعنوان <b>«' + esc_(r.title) + '»</b> بنسختين: ' +
+      '<b>Word</b> (قابلة للتعديل) و<b>PDF</b> (جاهزة للطباعة).</p>' +
+      (job.files ? '<p>ويمكنك تحميلهما أيضاً من هنا: <a href="' + dl_(job.files.docx) + '">Word</a> · <a href="' +
+        dl_(job.files.pdf) + '">PDF</a></p>' : '') +
+      '<p>ننصحك بمراجعته جيداً، والتحقق من المصادر والمراجع ' +
+      'قبل التسليم، وتعديله بما يناسب متطلبات قسمك ومشرفك.</p><p>بالتوفيق!</p>', attachments);
+    return true;
   } catch (e) {
-    return text;  // المراجعة تحسين اختياري
+    // البحث جاهز ومحفوظ: لا نُفشله بسبب حد Gmail، بل نعيد الإرسال لاحقاً، والطالب يحمّله من صفحة المتابعة
+    console.error('تعذر إرسال البحث #' + r.id + ': ' + e);
+    return false;
   }
+}
+
+/** مفاتيح أجزاء البحث التي تُكتب بالتوازي بعد الخطة. */
+function partKeys_(job) {
+  return ['abstract', 'intro'].concat(job.outline.chapters.map(function (_, i) { return 'ch:' + i; }), ['conclusion', 'references']);
+}
+
+/** طلب الكتابة وفحصه وحفظه لكل جزء. */
+function task_(r, job, key) {
+  const sz = sizes_(r);
+  const P = 'خطة البحث:\n' + plan_(job) + '\n\n';
+  if (key === 'abstract') return {
+    prompt: P + 'اكتب مستخلص البحث في نحو ' + sz.abstract + ' كلمة في فقرة واحدة متماسكة دون عنوان: ' +
+      'موضوع البحث وأهميته، ثم هدفه، ثم منهجه، ثم أبرز ما توصل إليه. ثم اكتب في سطر مستقل: ' +
+      (r.language === 'ar' ? '**الكلمات المفتاحية:** ' : '**Keywords:** ') + 'تليها 4 إلى 6 كلمات مفتاحية مفصولة بفواصل.',
+    validate: checkAbstract_(sz.abstract),
+    store: function (t) { job.parts.abstract = cleanAbstract_(t); },
+  };
+  if (key === 'intro') {
+    const parts = r.pages <= 10
+      ? 'مشكلة البحث، أهمية البحث، أهداف البحث، منهج البحث'
+      : 'مشكلة البحث (مع صياغة تساؤلاته)، أهمية البحث (النظرية والتطبيقية)، أهداف البحث، حدود البحث (الموضوعية، ' +
+        'والمكانية: ' + r.governorate + '، والزمانية: العام الدراسي الحالي)، منهج البحث، تحديد المصطلحات (مصطلحان أو ثلاثة لغةً واصطلاحاً)';
+    return {
+      prompt: P + 'اكتب مقدمة البحث في نحو ' + sz.intro + ' كلمة: فقرة تمهيدية تعرض الموضوع وسياقه، ثم العناصر ' +
+        'الآتية بالترتيب، كل عنصر تحت عنوان فرعي ### مسبوق بالترتيب الوصفي (' +
+        (r.language === 'ar' ? 'أولاً: ، ثانياً: ، ...' : 'First: , Second: , ...') + '): ' + parts + '.',
+      validate: function (t) { checkHeadings_(3)(t); checkLength_(t, sz.intro); },
+      store: function (t) { job.parts.intro = t; },
+    };
+  }
+  if (key.indexOf('ch:') === 0) {
+    const i = Number(key.split(':')[1]);
+    const ch = job.outline.chapters[i];
+    const nSec = job.outline.chapters.reduce(function (a, c) { return a + c.sections.length; }, 0);
+    const per = Math.max(80, Math.round(sz.body / nSec));
+    return {
+      prompt: P + 'اكتب الآن متن الفصل ' + (i + 1) + ': «' + ch.title + '» كاملاً. ابدأ بفقرة تمهيدية قصيرة للفصل، ' +
+        'ثم اكتب كل مبحث تحت سطر عنوان يبدأ بعلامتي ## متبوعتين باسم المبحث كما هو بالضبط، بهذا الترتيب:\n' +
+        ch.sections.map(function (sec) { return '## ' + sec; }).join('\n') + '\n' +
+        'في نحو ' + per + ' كلمة لكل مبحث. داخل المبحث يمكنك استخدام عناوين فرعية ### مسبوقة بالترتيب الوصفي (أولاً، ثانياً...). ' +
+        'لا تكتب عنوان الفصل، ولا مباحث غير المذكورة، ولا خلاصة عامة للبحث.',
+      validate: function (t) { splitChapter_(t, ch.sections.length); checkLength_(t, per * ch.sections.length); },
+      store: function (t) { splitChapter_(t, ch.sections.length).forEach(function (part, j) { job.parts['sec:' + i + ':' + j] = part; }); },
+    };
+  }
+  if (key === 'conclusion') {
+    const ar = r.language === 'ar';
+    const heads = ar ? ['### أولاً: الاستنتاجات', '### ثانياً: التوصيات', '### ثالثاً: المقترحات']
+                     : ['### First: Conclusions', '### Second: Recommendations', '### Third: Suggestions for Future Research'];
+    return {
+      prompt: P + 'اكتب خاتمة البحث في نحو ' + sz.conc + ' كلمة تحت العناوين الآتية بالترتيب: ' +
+        (r.pages <= 10 ? heads.slice(0, 2) : heads).join(' ، ') + '. اكتب تحت كل عنوان نقاطاً مرقمة (1- ، 2- ...)، ' +
+        'كل نقطة جملة أو جملتان دقيقتان مستخلصتان مما ورد في الفصول، والتوصيات موجهة إلى جهات محددة.',
+      validate: function (t) { checkHeadings_(2)(t); checkLength_(t, sz.conc); },
+      store: function (t) { job.parts.conclusion = t; },
+    };
+  }
+  if (key === 'references') return {
+    prompt: P + 'اكتب قائمة المصادر والمراجع بأسلوب APA (' + sz.refs + ' مراجع تقريباً)، ' +
+      (r.language === 'ar'
+        ? 'تحت عنوانين: ### أولاً: المصادر العربية ثم ### ثانياً: المصادر الأجنبية، كل قسم مرتب أبجدياً، '
+        : 'in one list ordered alphabetically by author, ') +
+      'كل مرجع في سطر يبدأ بـ "- ". تشمل المراجع المناسبة لموضوع البحث وفصوله. أدرج فقط مراجع حقيقية منشورة أنت واثق ' +
+      'من وجودها وبياناتها، ولا تضع أرقام DOI أو روابط إلا إذا كنت متأكداً منها تماماً. اكتب القائمة فقط دون أي تعليق.',
+    validate: checkReferences_,
+    store: function (t) { job.parts.references = cleanReferences_(t); },
+  };
+  throw new Error('جزء غير معروف: ' + key);
+}
+
+/**
+ * يكتب كل أجزاء البحث المتبقية في الوقت نفسه (UrlFetchApp.fetchAll)، كل جزء على محرك مختلف.
+ * الجزء الذي يفشل يُعاد على محرك آخر في الجولة التالية. يعيد true عند اكتمال كل الأجزاء.
+ */
+function writeAll_(r, job, deadline) {
+  job.done = job.done || {};
+  const system = system_(r);
+  const errors = {};
+  for (let round = 0; round < 4; round++) {
+    const todo = partKeys_(job).filter(function (k) { return !job.done[k]; });
+    if (!todo.length) return true;
+    if (round > 0 && Date.now() > deadline - 90 * 1000) return false;
+    const avail = available_();
+    if (!avail.length) break;
+    // نوزّع الأجزاء على المحركات القوية السريعة (ولو كتب أحدها جزأين)، ثم الخفيفة، ثم البطيئة إن لم يبقَ غيرها.
+    // ونبدّل المحرك في كل جولة حتى لا يُعاد الجزء الفاشل على المحرك نفسه
+    let pool = avail.filter(function (e) { return e.tier === 1; });
+    if (pool.length < 2) pool = avail.filter(function (e) { return e.tier <= 2; });
+    if (!pool.length) pool = avail;
+    const tasks = todo.map(function (k, i) {
+      return { key: k, t: task_(r, job, k), e: pool[(i + round + (job.shift || 0)) % pool.length] };
+    });
+    const reqs = tasks.map(function (x) { return request_(x.e, system, x.t.prompt, {}); });
+    let resps;
+    try {
+      resps = UrlFetchApp.fetchAll(reqs);
+    } catch (netErr) {
+      // خطأ شبكة في أحد الطلبات يُسقط الدفعة كلها: نجرّبها واحداً واحداً
+      resps = reqs.map(function (q) {
+        if (Date.now() > deadline - 60 * 1000) return null;
+        try { return UrlFetchApp.fetch(q.url, q); } catch (e) { return { error: String(e) }; }
+      });
+    }
+    tasks.forEach(function (x, i) {
+      try {
+        const resp = resps[i];
+        if (!resp) throw new Error('انتهى الوقت');
+        if (resp.error) throw new Error(resp.error);
+        const text = parse_(x.e, resp);
+        x.t.validate(text);
+        x.t.store(text);
+        job.done[x.key] = x.e.name;
+        delete errors[x.key];
+        if (job.engines.indexOf(x.e.name) < 0) job.engines.push(x.e.name);
+      } catch (err) {
+        errors[x.key] = x.e.name + ': ' + err.message;
+      }
+    });
+  }
+  const left = partKeys_(job).filter(function (k) { return !job.done[k]; });
+  if (!left.length) return true;
+  job.shift = (job.shift || 0) + 1;
+  const list = left.map(function (k) { return errors[k] || ''; }).filter(Boolean);
+  // إذا لم يبقَ أي محرك متاح فالسبب الحصة: نُبقي صيغة الخطأ التي يعرفها isQuotaError_
+  if (!available_().length) list.push('كل المحركات: في فترة تهدئة');
+  throw new Error('فشلت كل المحركات: ' + list.join(' | '));
 }
 
 function parseOutline_(text) {
@@ -678,15 +865,16 @@ function system_(r) {
 // ----------------------------- محركات الذكاء الاصطناعي -----------------------------
 function engines_() {
   const G = 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
-  const google = function (models, extra, maxTokens) {
+  const google = function (models, extra, maxTokens, tier) {
     return models.map(function (m) {
-      return { name: 'google:' + m, key: CONFIG.GEMINI_API_KEY, model: m, url: G, extra: extra, maxTokens: maxTokens };
+      return { name: 'google:' + m, key: CONFIG.GEMINI_API_KEY, model: m, url: G, extra: extra, maxTokens: maxTokens, tier: tier || 1 };
     });
   };
   const all = [].concat(
     google(CONFIG.GEMINI_MODELS, { reasoning_effort: 'medium' }, 8000),
-    // Gemma يكتب تفكيره داخل الرد، فنعطيه مساحة أكبر ونحذف التفكير لاحقاً
-    google(CONFIG.GEMMA_MODELS, {}, 16000),
+    // Gemma يكتب تفكيره داخل الرد، فنعطيه مساحة أكبر ونحذف التفكير لاحقاً. وهو بطيء (نحو 90 ثانية للفصل)،
+    // فلا يُستخدم في الكتابة المتوازية إلا عند نفاد حصة غيره (tier 3)
+    google(CONFIG.GEMMA_MODELS, {}, 16000, 3),
     [
       { name: 'groq', key: CONFIG.GROQ_API_KEY, model: CONFIG.GROQ_MODEL, url: 'https://api.groq.com/openai/v1/chat/completions' },
       { name: 'cerebras', key: CONFIG.CEREBRAS_API_KEY, model: CONFIG.CEREBRAS_MODEL, url: 'https://api.cerebras.ai/v1/chat/completions' },
@@ -694,9 +882,9 @@ function engines_() {
       { name: 'mistral', key: CONFIG.MISTRAL_API_KEY, model: CONFIG.MISTRAL_MODEL, url: 'https://api.mistral.ai/v1/chat/completions' },
       { name: 'openrouter', key: CONFIG.OPENROUTER_API_KEY, model: CONFIG.OPENROUTER_MODEL, url: 'https://openrouter.ai/api/v1/chat/completions' },
     ],
-    google(CONFIG.LITE_MODELS, { reasoning_effort: 'low' }, 8000)
+    google(CONFIG.LITE_MODELS, { reasoning_effort: 'low' }, 8000, 2)
   );
-  return all.filter(function (e) { return e.key && e.model; });
+  return all.filter(function (e) { return e.key && e.model; }).map(function (e) { e.tier = e.tier || 1; return e; });
 }
 
 /** يحذف «التفكير» الذي تكتبه بعض النماذج (مثل Gemma) داخل الرد. */
@@ -705,47 +893,64 @@ function stripThoughts_(t) {
 }
 
 /** يجرب المحركات بالترتيب (بدءاً من opts.start) ويعيد {text, engine}. */
-function callEngine_(system, prompt, opts) {
-  let list = engines_();
-  if (!list.length) throw new Error('لا يوجد أي مفتاح ذكاء اصطناعي في CONFIG');
-  const s = (opts.start || 0) % list.length;
-  list = list.slice(s).concat(list.slice(0, s));
+/** المحركات التي ليست في فترة تهدئة (نفاد حصة مؤقت أو مفتاح خاطئ)، بترتيب القوة. */
+function available_() {
   const cache = CacheService.getScriptCache();
-  const errors = [];
+  return engines_().filter(function (e) { return !cache.get('cool_' + e.name); });
+}
+
+function request_(e, system, prompt, opts) {
+  const body = Object.assign({
+    model: e.model, max_tokens: e.maxTokens || 8000, temperature: 0.7,
+    messages: [{ role: 'system', content: system }, { role: 'user', content: prompt }],
+  }, e.extra || {});
+  if (opts.json) body.response_format = { type: 'json_object' };
+  return { url: e.url, method: 'post', contentType: 'application/json', muteHttpExceptions: true,
+           headers: { Authorization: 'Bearer ' + e.key }, payload: JSON.stringify(body) };
+}
+
+/** يقرأ رد المحرك ويعيد النص، أو يرمي خطأ، ويضع المحرك في فترة تهدئة عند نفاد حصته. */
+function parse_(e, resp) {
+  const cache = CacheService.getScriptCache();
+  const code = resp.getResponseCode();
+  if (code === 429 || code === 503) {
+    // ننتظر المدة التي يطلبها المزوّد (قد تكون حتى تجدد الحصة اليومية)، بحد أقصى 6 ساعات
+    let wait = 60;
+    try {
+      let d = JSON.parse(resp.getContentText());
+      d = Array.isArray(d) ? d[0] : d;
+      (d.error.details || []).forEach(function (x) { if (x.retryDelay) wait = parseFloat(x.retryDelay); });
+    } catch (ignore) { /* نستخدم الافتراضي */ }
+    cache.put('cool_' + e.name, '1', Math.max(20, Math.min(21600, Math.round(wait))));
+    throw new Error('HTTP ' + code + ' (تجاوز الحد المجاني مؤقتاً)');
+  }
+  if (code === 401 || code === 403) {
+    cache.put('cool_' + e.name, '1', 3600);  // مفتاح خاطئ أو بلا صلاحية: لا نكرر المحاولة لساعة
+    throw new Error('HTTP ' + code + ': المفتاح غير صالح');
+  }
+  if (code === 404) {
+    cache.put('cool_' + e.name, '1', 21600);  // النموذج أُلغي أو غير متاح لهذا المفتاح
+    throw new Error('HTTP 404: النموذج غير متاح');
+  }
+  if (code !== 200) throw new Error('HTTP ' + code + ': ' + resp.getContentText().slice(0, 200));
+  const choice = JSON.parse(resp.getContentText()).choices[0];
+  if (choice.finish_reason === 'length') throw new Error('انقطع الرد لتجاوز الطول');
+  const text = stripThoughts_((choice.message && choice.message.content) || '');
+  if (!text) throw new Error('رد فارغ');
+  return text;
+}
+
+/** يجرب المحركات بالترتيب ويعيد {text, engine}. */
+function callEngine_(system, prompt, opts) {
+  const all = engines_();
+  if (!all.length) throw new Error('لا يوجد أي مفتاح ذكاء اصطناعي في CONFIG');
+  const list = available_();
+  const errors = all.length > list.length ? ['المحركات الأخرى: في فترة تهدئة'] : [];
   for (let i = 0; i < list.length; i++) {
     const e = list[i];
-    if (cache.get('cool_' + e.name)) { errors.push(e.name + ': في فترة تهدئة'); continue; }
     try {
-      const body = Object.assign({
-        model: e.model, max_tokens: e.maxTokens || 8000, temperature: 0.7,
-        messages: [{ role: 'system', content: system }, { role: 'user', content: prompt }],
-      }, e.extra || {});
-      if (opts.json) body.response_format = { type: 'json_object' };
-      const resp = UrlFetchApp.fetch(e.url, {
-        method: 'post', contentType: 'application/json', muteHttpExceptions: true,
-        headers: { Authorization: 'Bearer ' + e.key }, payload: JSON.stringify(body),
-      });
-      const code = resp.getResponseCode();
-      if (code === 429 || code === 503) {
-        // ننتظر المدة التي يطلبها المزوّد (قد تكون حتى تجدد الحصة اليومية)، بحد أقصى 6 ساعات
-        let wait = 90;
-        try {
-          let d = JSON.parse(resp.getContentText());
-          d = Array.isArray(d) ? d[0] : d;
-          (d.error.details || []).forEach(function (x) { if (x.retryDelay) wait = parseFloat(x.retryDelay); });
-        } catch (ignore) { /* نستخدم الافتراضي */ }
-        cache.put('cool_' + e.name, '1', Math.max(30, Math.min(21600, Math.round(wait))));
-        throw new Error('HTTP ' + code + ' (تجاوز الحد المجاني مؤقتاً)');
-      }
-      if (code === 401 || code === 403) {
-        cache.put('cool_' + e.name, '1', 3600);  // مفتاح خاطئ أو بلا صلاحية: لا نكرر المحاولة لساعة
-        throw new Error('HTTP ' + code + ': المفتاح غير صالح');
-      }
-      if (code !== 200) throw new Error('HTTP ' + code + ': ' + resp.getContentText().slice(0, 200));
-      const choice = JSON.parse(resp.getContentText()).choices[0];
-      if (choice.finish_reason === 'length') throw new Error('انقطع الرد لتجاوز الطول');
-      const text = stripThoughts_((choice.message && choice.message.content) || '');
-      if (!text) throw new Error('رد فارغ');
+      const q = request_(e, system, prompt, opts);
+      const text = parse_(e, UrlFetchApp.fetch(q.url, q));
       if (opts.validate) opts.validate(text);
       return { text: text, engine: e.name };
     } catch (err) {
@@ -958,8 +1163,75 @@ function wrap_(body) {
     '<div style="padding:24px;color:#222;line-height:1.9;font-size:15px">' + body + '</div></div></div>';
 }
 
+/** المرسل: إيميل المنصة إذا كان مضافاً في Gmail كـ «إرسال بريد باسم»، وإلا حساب Google نفسه. */
+function sender_() {
+  const want = String(CONFIG.PLATFORM_EMAIL || '').trim().toLowerCase();
+  if (!want) return {};
+  const cache = CacheService.getScriptCache();
+  let ok = cache.get('alias_' + want);
+  if (ok === null) {
+    ok = 'no';
+    try {
+      if (Session.getEffectiveUser().getEmail().toLowerCase() === want) ok = 'self';
+      else if (GmailApp.getAliases().some(function (a) { return a.toLowerCase() === want; })) ok = 'yes';
+    } catch (e) { console.warn('aliases: ' + e); }
+    cache.put('alias_' + want, ok, 6 * 3600);
+  }
+  return { replyTo: want, from: ok === 'yes' ? want : '' };
+}
+
 function mail_(to, subject, html, attachments) {
-  MailApp.sendEmail({ to: to, subject: subject, htmlBody: wrap_(html), name: 'منصة منهج', attachments: attachments || [] });
+  const s = sender_();
+  const opts = { htmlBody: wrap_(html), name: CONFIG.SENDER_NAME || 'منصة منهج', attachments: attachments || [] };
+  if (s.replyTo && to.toLowerCase() !== s.replyTo) opts.replyTo = s.replyTo;
+  if (s.from) {
+    opts.from = s.from;
+    GmailApp.sendEmail(to, subject, 'افتح هذه الرسالة في تطبيق يدعم HTML.', opts);
+  } else {
+    MailApp.sendEmail(Object.assign({ to: to, subject: subject }, opts));
+  }
+}
+
+function mailQuota_() {
+  try { return MailApp.getRemainingDailyQuota(); } catch (e) { return -1; }
+}
+
+/** إيميل غير ضروري (تأكيد الاستلام، بدء الكتابة، التأخير): يُتخطّى عند اقتراب حصة Gmail من النفاد. */
+function lowMail_(to, subject, html) {
+  const q = mailQuota_();
+  if (q >= 0 && q <= MAIL_RESERVE) { console.warn('تخطي إيميل لتوفير الحصة: ' + subject); return; }
+  safeMail_(to, subject, html);
+}
+
+// ----- إعادة إرسال البحوث التي لم تُرسل بسبب حد Gmail اليومي -----
+function retryList_() {
+  return String(props_().getProperty('MAIL_RETRY') || '').split(',').filter(Boolean).map(Number);
+}
+function addRetry_(id) {
+  const l = retryList_();
+  if (l.indexOf(id) < 0) l.push(id);
+  props_().setProperty('MAIL_RETRY', l.join(','));
+}
+function retryMails_() {
+  const l = retryList_();
+  if (!l.length) return;
+  const left = l.filter(function (id) {
+    try {
+      if (mailQuota_() === 0) return true;
+      const r = getReq_(id), job = loadJob_(id);
+      if (!r || !job || !job.files) return false;
+      const blobs = [DriveApp.getFileById(job.files.docx).getBlob(), DriveApp.getFileById(job.files.pdf).getBlob()];
+      if (!sendReady_(r, job, blobs)) return true;
+      job.mailed = true;
+      saveJob_(id, job);
+      setReq_(id, { error: '' });
+      return false;
+    } catch (e) {
+      console.warn('إعادة إرسال #' + id + ': ' + e);
+      return true;
+    }
+  });
+  props_().setProperty('MAIL_RETRY', left.join(','));
 }
 
 function safeMail_(to, subject, html) {

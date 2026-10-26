@@ -6,29 +6,37 @@ const sheet={ appendRow:r=>rows.push(r.slice()), getLastRow:()=>rows.length, set
   getRange:(r,c,nr,nc)=>({ getValues:()=>{const o=[];for(let i=0;i<(nr||1);i++){o.push(rows[r-1+i].slice(c-1,c-1+(nc||1)))}return o;},
     setValue:v=>{rows[r-1][c-1]=v;}, setValues:v=>{if(!rows[r-1])rows[r-1]=[];v[0].forEach((x,i)=>rows[r-1][c-1+i]=x)} }) };
 function mkFile(name,data){const f={name,data,trashed:false,getBlob:()=>({getDataAsString:()=>f.data}),setContent:d=>{f.data=d},setTrashed:t=>{f.trashed=t;delete files[name]},moveTo(){},
-  getAs:()=>({setName:n=>({name:n,type:'pdf'})})};files[name]=f;return f;}
-const folder={getFilesByName:n=>{const f=files[n];let done=!f;return{hasNext:()=>!done,next:()=>{done=true;return f}}},createFile:(n,d)=>mkFile(n,d),getId:()=>'F'};
+  getAs:()=>({setName:n=>({name:n,type:'pdf'})}),setSharing(){f.shared=true},getId:()=>name};files[name]=f;return f;}
+const folder={getFilesByName:n=>{const f=files[n];let done=!f;return{hasNext:()=>!done,next:()=>{done=true;return f}}},createFile:(n,d)=>typeof n==='string'?mkFile(n,d):mkFile(n.name,n),getId:()=>'F'};
 let docLog=[];
 function para(kind){const p={kind,text:'',setSpacingBefore:()=>p,setSpacingAfter:()=>p,editAsText:()=>({setBold:()=>p}),appendText:t=>{p.text+=t;return{setBold:b=>{if(b)p.bold=true}}},setHeading:h=>{p.h=h;return p},setAttributes:()=>p,setLeftToRight:v=>{p.ltr=v;return p},
   setAlignment:a=>p,setGlyphType:()=>p,setIndentFirstLine:()=>p,setIndentStart:()=>p,getType:()=>'P',asParagraph:()=>p,getText:()=>p.text,removeFromParent:()=>{docLog.shift()}};docLog.push(p);return p;}
 const g={
   Logger:{log:console.log}, console,
-  PropertiesService:{getScriptProperties:()=>({getProperties:()=>props,getProperty:k=>props[k]||null,setProperty:(k,v)=>{props[k]=v}})},
+  PropertiesService:{getScriptProperties:()=>({getProperties:()=>props,getProperty:k=>props[k]||null,setProperty:(k,v)=>{props[k]=v},deleteProperty:k=>{delete props[k]}})},
   SpreadsheetApp:{create:()=>({getSheets:()=>[sheet],getId:()=>'SS',getUrl:()=>'url'}),openById:()=>({getSheets:()=>[sheet],getUrl:()=>'url'})},
-  DriveApp:{createFolder:()=>folder,getFolderById:()=>folder,getFileById:id=>id==='DOC'?mkFile('doc'):{moveTo(){}}},
+  DriveApp:{Access:{ANYONE_WITH_LINK:1},Permission:{VIEW:1},createFolder:()=>folder,getFolderById:()=>folder,getFileById:id=>id==='DOC'?mkFile('doc'):(files[id]?{getBlob:()=>({name:id}),moveTo(){}}:{moveTo(){}})},
   Utilities:{getUuid:()=>crypto.randomUUID(),computeHmacSha256Signature:(v,k)=>[...crypto.createHmac('sha256',k).update(v).digest()],
     base64EncodeWebSafe:b=>Buffer.from(b).toString('base64url')},
   Session:{getEffectiveUser:()=>({getEmail:()=>'admin@x.com'})},
   ScriptApp:{getService:()=>({getUrl:()=>'https://script.google.com/macros/s/X/exec'}),getProjectTriggers:()=>triggers,deleteTrigger:t=>triggers.splice(triggers.indexOf(t),1),
-    newTrigger:fn=>({timeBased:()=>({after:ms=>({create:()=>triggers.push({fn,ms,getHandlerFunction:()=>fn})}),everyMinutes:m=>({create:()=>{}})})}),getOAuthToken:()=>'tok'},
+    newTrigger:fn=>({timeBased:()=>({after:ms=>({create:()=>{const u='T'+Math.random();const t={fn,ms,getHandlerFunction:()=>fn,getUniqueId:()=>u};triggers.push(t);return t}}),everyMinutes:m=>({create:()=>{}})})}),getOAuthToken:()=>'tok'},
   LockService:{getScriptLock:()=>({waitLock(){},tryLock:()=>true,releaseLock(){}})},
   CacheService:{getScriptCache:()=>({get:k=>cache[k]||null,put:(k,v)=>{cache[k]=v}})},
-  MailApp:{sendEmail:o=>mails.push(o)},
+  MailApp:{sendEmail:o=>{if(g.quota<=0)throw new Error('Service invoked too many times: email');g.quota--;mails.push(o)},getRemainingDailyQuota:()=>g.quota},
+  GmailApp:{getAliases:()=>['platform@x.com'],sendEmail:(to,subject,b,o)=>{if(g.quota<=0)throw new Error('quota');g.quota--;mails.push(Object.assign({to,subject},o))}},
+  quota:100,
   ContentService:{MimeType:{JSON:'json'},createTextOutput:t=>({text:t,setMimeType(){return this}})},
   HtmlService:{XFrameOptionsMode:{ALLOWALL:1},createHtmlOutput:h=>({html:h,setTitle(){return this},addMetaTag(){return this},setXFrameOptionsMode(){return this}})},
   DocumentApp:{create:()=>{docLog=[];para('first');return{getBody:()=>body,saveAndClose(){},getId:()=>'DOC',getUrl:()=>'docurl'}},
     Attribute:{},HorizontalAlignment:{},ParagraphHeading:{HEADING1:1,HEADING2:2,HEADING3:3},GlyphType:{},ElementType:{PARAGRAPH:'P'}},
-  UrlFetchApp:{fetch:(url,o)=>{
+  UrlFetchApp:{fetchAll:reqs=>{ // طلبات متوازية فعلاً مثل UrlFetchApp.fetchAll
+    const cp=require('child_process'),os=require('os'),path=require('path');const d=fs.mkdtempSync(path.join(os.tmpdir(),'fa'));
+    reqs.forEach((q,i)=>{fs.writeFileSync(d+'/p'+i,q.payload);fetches.push(JSON.parse(q.payload).model)});
+    const sh=reqs.map((q,i)=>`curl -sS -m 300 -o ${d}/o${i} -w '%{http_code} %{time_total}' ${JSON.stringify(q.url)} -H ${JSON.stringify('Authorization: '+q.headers.Authorization)} -H 'Content-Type: application/json' --data-binary @${d}/p${i} > ${d}/c${i} &`).join('\n')+'\nwait';
+    const t0=Date.now(); cp.execSync(sh,{shell:'/bin/bash'}); console.log('fetchAll',reqs.length,'in',Math.round((Date.now()-t0)/1000)+'s');
+    return reqs.map((q,i)=>{const cc=fs.readFileSync(d+'/c'+i,'utf8').split(' ');const c=Number(cc[0]);console.log('  ',JSON.parse(q.payload).model,cc[0],Math.round(cc[1])+'s',JSON.parse(q.payload).messages[1].content.slice(-60).replace(/\n/g,' '));const b=fs.existsSync(d+'/o'+i)?fs.readFileSync(d+'/o'+i,'utf8'):'';return{getResponseCode:()=>c,getContentText:()=>b}});
+  },fetch:(url,o)=>{
     if(url.includes('export?format=docx')) return {getBlob:()=>({setName:n=>({name:n})})};
     const eng=JSON.parse(o.payload).model; fetches.push(eng);
     const cp=require('child_process');
@@ -51,7 +59,7 @@ vm.createContext(g); vm.runInContext(code,g);
 g.setup();
 let r=vm.runInContext('submitRequest',g)({student_name:'أحمد',email:'s@x.com',university:'ج',college:'ك',department:'ق',governorate:'بغداد',supervisor:'م',title:'أثر التعلم الإلكتروني في التحصيل الدراسي لطلبة الجامعة',details:'أريد فصلاً نظرياً عن مفهوم التعلم الإلكتروني وأنواعه، وفصلاً عن أثره في التحصيل مع عرض دراسات سابقة.',language:'ar',pages:'25'});
 console.log('25 pages ->',r.ok,r.errors);
-r=g.submitRequest({student_name:'أحمد',email:'s@x.com',university:'ج',college:'ك',department:'ق',governorate:'بغداد',supervisor:'م',title:'أثر التعلم الإلكتروني في التحصيل الدراسي لطلبة الجامعة',details:'أريد فصلاً نظرياً عن مفهوم التعلم الإلكتروني وأنواعه، وفصلاً عن أثره في التحصيل مع عرض دراسات سابقة.',language:'ar',pages:'5'});
+r=g.submitRequest({student_name:'أحمد',email:'s@x.com',university:'ج',college:'ك',department:'ق',governorate:'بغداد',supervisor:'م',title:'أثر التعلم الإلكتروني في التحصيل الدراسي لطلبة الجامعة',details:'أريد فصلاً نظرياً عن مفهوم التعلم الإلكتروني وأنواعه، وفصلاً عن أثره في التحصيل مع عرض دراسات سابقة.',language:'ar',pages:'20'});
 console.log('submit',r);
 const html=mails[0].htmlBody; const link=html.match(/href="([^"]*a=approve[^"]*)"/)[1];
 const q=new URL(link).searchParams;

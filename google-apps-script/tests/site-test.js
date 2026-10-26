@@ -4,15 +4,17 @@ const fs = require('fs'), http = require('http'), path = require('path');
 const { chromium } = require(require('child_process').execSync('npm root -g').toString().trim() + '/playwright');
 const OUT = process.argv[2] || '.';
 const page = fs.readFileSync(path.join(__dirname, '..', '..', 'docs', 'index.html'), 'utf8');
-let lastSubmit = null;
+let lastSubmit = null, tracks = 0, works = 0;
 const srv = http.createServer((req, res) => {
   if (req.url === '/' || req.url.startsWith('/?')) { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); return res.end(page.replace('__API_URL__', 'http://localhost:' + srv.address().port + '/api')); }
   if (req.url.startsWith('/api?api=config')) { res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ price: 12000, method: 'كي كارد', account: '3001941925', minPages: 5, maxPages: 20, delivery: 'خلال 24 ساعة من تأكيد التحويل' })); }
+  if (req.url.startsWith('/api?api=work')) { works++; res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end('{"ok":true}'); }
   if (req.url === '/api' && req.method === 'POST') {
     let b = ''; req.on('data', c => b += c); req.on('end', () => {
       const { fn, args } = JSON.parse(b);
       const out = fn === 'submitRequest' ? (lastSubmit = args[0], { ok: true, id: 23, email: args[0].email })
-        : { ok: true, id: 23, title: 'أثر التعلم الإلكتروني', stage: 2, progress: 40, created: '2026/10/18' };
+        : ++tracks < 2 ? { ok: true, id: 23, title: 'أثر التعلم الإلكتروني', stage: 2, progress: 40, created: '2026/10/18' }
+        : { ok: true, id: 23, title: 'أثر التعلم الإلكتروني', stage: 4, progress: 100, created: '2026/10/18', files: { pdf: 'https://drive.google.com/uc?export=download&id=P', docx: 'https://drive.google.com/uc?export=download&id=D' } };
       setTimeout(() => { res.writeHead(200, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(out)); }, 300);
     }); return;
   }
@@ -38,6 +40,8 @@ const srv = http.createServer((req, res) => {
   await p.goto(url + '?track=23'); await p.waitForTimeout(500);
   await p.fill('#tem', 'ahmed@gmail.com'); await p.click('#tbtn'); await p.waitForSelector('.tl', { timeout: 5000 });
   console.log('track stage now:', await p.textContent('.tl li.now'));
+  await p.waitForSelector('.dl', { timeout: 25000 });
+  console.log('auto-refresh -> downloads:', await p.locator('.dl').count(), '| work pings:', works, '| tracks:', tracks);
   await p.locator('#track').screenshot({ path: OUT + '/site-track.png' });
   console.log('page errors:', errors.length ? errors : 'none', '| h-overflow:', await p.evaluate(() => document.documentElement.scrollWidth > innerWidth));
   await b.close(); srv.close();
