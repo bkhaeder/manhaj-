@@ -27,7 +27,7 @@ const CONFIG = {
   LITE_MODELS: ['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', 'gemini-flash-lite-latest'],
   // محركات اختيارية من شركات أخرى: ضع مفتاح أي منها في «خصائص النص البرمجي» فيُضاف تلقائياً
   GROQ_API_KEY: '',          // https://console.groq.com/keys
-  GROQ_MODEL: 'llama-3.3-70b-versatile',
+  GROQ_MODELS: ['openai/gpt-oss-120b', 'llama-3.3-70b-versatile'],  // سريعة جداً، ولكل نموذج حصة يومية منفصلة
   CEREBRAS_API_KEY: '',      // https://cloud.cerebras.ai (API Keys)
   CEREBRAS_MODEL: 'gpt-oss-120b',
   GITHUB_MODELS_TOKEN: '',   // رمز GitHub بصلاحية Models: https://github.com/settings/personal-access-tokens
@@ -875,8 +875,11 @@ function engines_() {
     // Gemma يكتب تفكيره داخل الرد، فنعطيه مساحة أكبر ونحذف التفكير لاحقاً. وهو بطيء (نحو 90 ثانية للفصل)،
     // فلا يُستخدم في الكتابة المتوازية إلا عند نفاد حصة غيره (tier 3)
     google(CONFIG.GEMMA_MODELS, {}, 16000, 3),
+    CONFIG.GROQ_MODELS.map(function (m) {
+      return { name: 'groq:' + m, key: CONFIG.GROQ_API_KEY, model: m, url: 'https://api.groq.com/openai/v1/chat/completions',
+               extra: /gpt-oss/.test(m) ? { reasoning_effort: 'low' } : {} };
+    }),
     [
-      { name: 'groq', key: CONFIG.GROQ_API_KEY, model: CONFIG.GROQ_MODEL, url: 'https://api.groq.com/openai/v1/chat/completions' },
       { name: 'cerebras', key: CONFIG.CEREBRAS_API_KEY, model: CONFIG.CEREBRAS_MODEL, url: 'https://api.cerebras.ai/v1/chat/completions' },
       { name: 'github', key: CONFIG.GITHUB_MODELS_TOKEN, model: CONFIG.GITHUB_MODEL, url: 'https://models.github.ai/inference/chat/completions' },
       { name: 'mistral', key: CONFIG.MISTRAL_API_KEY, model: CONFIG.MISTRAL_MODEL, url: 'https://api.mistral.ai/v1/chat/completions' },
@@ -931,6 +934,10 @@ function parse_(e, resp) {
   if (code === 404) {
     cache.put('cool_' + e.name, '1', 21600);  // النموذج أُلغي أو غير متاح لهذا المفتاح
     throw new Error('HTTP 404: النموذج غير متاح');
+  }
+  if (code === 400 && /decommission|not found|does not exist|not supported/i.test(resp.getContentText())) {
+    cache.put('cool_' + e.name, '1', 21600);
+    throw new Error('HTTP 400: النموذج غير متاح');
   }
   if (code !== 200) throw new Error('HTTP ' + code + ': ' + resp.getContentText().slice(0, 200));
   const choice = JSON.parse(resp.getContentText()).choices[0];
