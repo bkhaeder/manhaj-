@@ -21,6 +21,7 @@
 const CONFIG = {
   // ----- محركات الذكاء الاصطناعي (كلها مجانية). تُجرَّب بالترتيب، وإذا نفدت حصة محرك يُنتقل للتالي -----
   GEMINI_API_KEY: '',        // مطلوب: https://aistudio.google.com/apikey (يشغّل نماذج Gemini وGemma كلها)
+  // لكل حساب Google حصة مجانية مستقلة: يمكن وضع عدة مفاتيح من حسابات مختلفة مفصولة بفواصل فتتضاعف القدرة اليومية
   // لكل نموذج حصة مجانية يومية منفصلة. الأقوى أولاً، ثم Gemma (حصتها كبيرة)، ثم النماذج الخفيفة احتياطاً أخيراً
   GEMINI_MODELS: ['gemini-flash-latest', 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-3-flash-preview'],
   GEMMA_MODELS: ['gemma-4-31b-it', 'gemma-4-26b-a4b-it'],
@@ -44,6 +45,8 @@ const CONFIG = {
   SENDER_NAME: 'منصة منهج',  // الاسم الظاهر للمرسل
   NOTIFY_ADMIN_DONE: false,  // إيميل لك عند إرسال كل بحث (معطّل لتوفير حصة Gmail اليومية)
   MAX_WORKERS: 3,            // عدد البحوث التي تُكتب في الوقت نفسه
+  MAX_PENDING_PER_EMAIL: 3,  // حماية من الإزعاج: أقصى عدد طلبات بانتظار المراجعة لكل بريد
+  MAX_PER_HOUR: 40,          // أقصى عدد طلبات جديدة في الساعة لكل المنصة
   MIN_PAGES: 5,
   MAX_PAGES: 20,
   PRICE_IQD: 15000,          // سعر البحث بالدينار العراقي (يظهر في الواجهة والإيميلات)
@@ -97,7 +100,14 @@ const FIELDS = {
 // ----------------------------- الإعداد والتخزين -----------------------------
 function setup() {
   ensureWatchdog_();
-  sheet_().getRange(1, 1, 1, COLS.length).setValues([COLS]);
+  const sh = sheet_();
+  sh.getRange(1, 1, 1, COLS.length).setValues([COLS]);
+  // رقم الطلب هو رقم صفّه: حذف صف يربك الطلبات التالية، فنحذّر من يعدّل الجدول يدوياً
+  try {
+    if (!sh.getProtections(SpreadsheetApp.ProtectionType.SHEET).length) {
+      sh.protect().setDescription('لا تحذف الصفوف: رقم الطلب مرتبط بترتيبها').setWarningOnly(true);
+    }
+  } catch (e) { /* اختياري */ }
   folder_();
   secret_();
   const url = ScriptApp.getService().getUrl();
@@ -291,6 +301,25 @@ function reviewUrl_(id, action) {
   return ScriptApp.getService().getUrl() + '?id=' + id + '&a=' + action + '&sig=' + sign_(id, action);
 }
 
+/** حماية من الإزعاج: طلبات معلّقة كثيرة من البريد نفسه، أو سيل طلبات خلال ساعة. */
+function limits_(sh, email) {
+  const n = sh.getLastRow() - 1;
+  if (n < 1) return '';
+  const c0 = COLS.indexOf('created'), cs = COLS.indexOf('status'), ce = COLS.indexOf('email');
+  const vals = sh.getRange(2, c0 + 1, n, ce - c0 + 1).getValues();
+  const hourAgo = Date.now() - 3600 * 1000, me = String(email).toLowerCase();
+  let pending = 0, recent = 0;
+  vals.forEach(function (v) {
+    if (String(v[ce - c0]).toLowerCase() === me && v[cs - c0] === 'pending') pending++;
+    if (new Date(v[0]).getTime() > hourAgo) recent++;
+  });
+  if (pending >= CONFIG.MAX_PENDING_PER_EMAIL) {
+    return 'لديك ' + pending + ' طلبات بانتظار المراجعة. انتظر حتى نراجعها، أو تابعها من «تابع طلبك».';
+  }
+  if (recent >= CONFIG.MAX_PER_HOUR) return 'المنصة تستقبل طلبات كثيرة الآن، حاول مرة أخرى بعد قليل.';
+  return '';
+}
+
 /** يُستدعى من نموذج الطالب. */
 function submitRequest(d) {
   const errors = [];
@@ -309,12 +338,15 @@ function submitRequest(d) {
     errors.push('عدد الصفحات يجب أن يكون بين ' + CONFIG.MIN_PAGES + ' و' + CONFIG.MAX_PAGES + '.');
   }
   if (errors.length) return { ok: false, errors: errors };
+  if (String(d.website || '').trim()) return { ok: true, id: 0, email: r.email };  // حقل مخفي لا يملؤه إلا الروبوت
 
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(25000)) return { ok: false, errors: ['المنصة مزدحمة الآن، أعد الإرسال بعد ثوانٍ.'] };
   let id;
   try {
     const sh = sheet_();
+    const limit = limits_(sh, r.email);
+    if (limit) return { ok: false, errors: [limit] };
     id = sh.getLastRow();  // الصف الأول للعناوين
     r.id = id;
     r.created = new Date();
@@ -871,10 +903,17 @@ function system_(r) {
 // ----------------------------- محركات الذكاء الاصطناعي -----------------------------
 function engines_() {
   const G = 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions';
+  const keys = String(CONFIG.GEMINI_API_KEY || '').split(',').map(function (k) { return k.trim(); }).filter(Boolean);
   const google = function (models, extra, maxTokens, tier) {
-    return models.map(function (m) {
-      return { name: 'google:' + m, key: CONFIG.GEMINI_API_KEY, model: m, url: G, extra: extra, maxTokens: maxTokens, tier: tier || 1 };
+    const out = [];
+    // نرتّب حسب النموذج ثم المفتاح، فيتوزع العمل على حصص المفاتيح كلها
+    models.forEach(function (m) {
+      keys.forEach(function (key, i) {
+        out.push({ name: 'google:' + m + (i ? '#' + (i + 1) : ''), key: key, model: m, url: G, extra: extra,
+                   maxTokens: maxTokens, tier: tier || 1 });
+      });
     });
+    return out;
   };
   const all = [].concat(
     google(CONFIG.GEMINI_MODELS, { reasoning_effort: 'medium' }, 8000),

@@ -14,7 +14,7 @@ function para(kind){const p={kind,text:'',setSpacingBefore:()=>p,setSpacingAfter
 const g={
   Logger:{log:console.log}, console,
   PropertiesService:{getScriptProperties:()=>({getProperties:()=>props,getProperty:k=>props[k]||null,setProperty:(k,v)=>{props[k]=v},deleteProperty:k=>{delete props[k]}})},
-  SpreadsheetApp:{create:()=>({getSheets:()=>[sheet],getId:()=>'SS',getUrl:()=>'url'}),openById:()=>({getSheets:()=>[sheet],getUrl:()=>'url'})},
+  SpreadsheetApp:{ProtectionType:{SHEET:1},create:()=>({getSheets:()=>[sheet],getId:()=>'SS',getUrl:()=>'url'}),openById:()=>({getSheets:()=>[sheet],getUrl:()=>'url'})},
   DriveApp:{Access:{ANYONE_WITH_LINK:1},Permission:{VIEW:1},createFolder:()=>folder,getFolderById:()=>folder,getFileById:id=>id==='DOC'?mkFile('doc'):(files[id]?{getBlob:()=>({name:id}),moveTo(){}}:{moveTo(){}})},
   Utilities:{formatDate:(d)=>d.toISOString().slice(0,10).replace(/-/g,'/'),getUuid:()=>crypto.randomUUID(),computeHmacSha256Signature:(v,k)=>[...crypto.createHmac('sha256',k).update(v).digest()],
     base64EncodeWebSafe:b=>Buffer.from(b).toString('base64url')},
@@ -95,3 +95,11 @@ console.log('track while mail pending has files:', !!g.trackRequest(String(b.id)
 g.quota=100; mails.length=0; g.watchdog();
 console.log('retry sent:', mails.map(m=>m.subject+' '+(m.attachments||[]).length), 'retry left:', JSON.stringify(props.MAIL_RETRY), 'err col:', JSON.stringify(rows[b.id][15]));
 console.log('leases left:', Object.keys(props).filter(k=>/^(LEASE|WAIT)_/.test(k)));
+
+// حماية من الإزعاج + عدة مفاتيح Gemini
+const base={student_name:'ع',email:'p@x.com',university:'ج',college:'ك',department:'ق',governorate:'بغداد',supervisor:'م',title:'ت',details:'د',language:'ar',pages:'5'};
+g.quota=100; const lim=[1,2,3,4].map(()=>g.submitRequest(base));
+console.log('pending limit:', lim.map(x=>x.ok).join(','), lim[3].errors);
+console.log('honeypot:', JSON.stringify(g.submitRequest(Object.assign({},base,{email:'bot@x.com',website:'http://spam'}))), 'rows', rows.length);
+props.GEMINI_API_KEY='k1, k2'; g.loadConfig_();
+console.log('two keys engines:', g.engines_().filter(e=>e.name.startsWith('google:')).length, g.engines_().slice(0,3).map(e=>e.name+'/'+e.key));
