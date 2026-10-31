@@ -1,5 +1,5 @@
 const fs=require('fs'), vm=require('vm'), crypto=require('crypto');
-let code=fs.readFileSync(process.argv[2],'utf8').replace("GEMINI_API_KEY: '',","GEMINI_API_KEY: '"+process.env.GEMINI_API_KEY+"',").replace("'gemini-flash-latest', 'gemini-3.7-flash', ","");
+let code=fs.readFileSync(process.argv[2],'utf8').replace("GEMINI_API_KEY: '',","GEMINI_API_KEY: '"+process.env.GEMINI_API_KEY+"',");
 const props={}, cache={}, files={}, mails=[], triggers=[], fetches=[];
 const rows=[];
 const sheet={ appendRow:r=>rows.push(r.slice()), getLastRow:()=>rows.length, setFrozenRows(){}, setRightToLeft(){}, setName(){},
@@ -33,14 +33,16 @@ const g={
   UrlFetchApp:{fetchAll:reqs=>{ // طلبات متوازية فعلاً مثل UrlFetchApp.fetchAll
     const cp=require('child_process'),os=require('os'),path=require('path');const d=fs.mkdtempSync(path.join(os.tmpdir(),'fa'));
     reqs.forEach((q,i)=>{fs.writeFileSync(d+'/p'+i,q.payload);fetches.push(JSON.parse(q.payload).model)});
-    const sh=reqs.map((q,i)=>`curl -sS -m 300 -o ${d}/o${i} -w '%{http_code} %{time_total}' ${JSON.stringify(q.url)} -H ${JSON.stringify('Authorization: '+q.headers.Authorization)} -H 'Content-Type: application/json' --data-binary @${d}/p${i} > ${d}/c${i} &`).join('\n')+'\nwait';
+    const sh=reqs.map((q,i)=>`curl -sS -m 60 -o ${d}/o${i} -w '%{http_code} %{time_total}' ${JSON.stringify(q.url)} -H ${JSON.stringify('Authorization: '+q.headers.Authorization)} -H 'Content-Type: application/json' --data-binary @${d}/p${i} > ${d}/c${i} &`).join('\n')+'\nwait';
     const t0=Date.now(); cp.execSync(sh,{shell:'/bin/bash'}); console.log('fetchAll',reqs.length,'in',Math.round((Date.now()-t0)/1000)+'s');
+    // مثل UrlFetchApp: انتهاء مهلة أي طلب (60 ثانية) يُسقط الدفعة كلها
+    reqs.forEach((q,i)=>{if(fs.readFileSync(d+'/c'+i,'utf8').startsWith('000'))throw new Error('Timeout: '+q.url)});
     return reqs.map((q,i)=>{const cc=fs.readFileSync(d+'/c'+i,'utf8').split(' ');const c=Number(cc[0]);console.log('  ',JSON.parse(q.payload).model,cc[0],Math.round(cc[1])+'s',JSON.parse(q.payload).messages[1].content.slice(-60).replace(/\n/g,' '));const b=fs.existsSync(d+'/o'+i)?fs.readFileSync(d+'/o'+i,'utf8'):'';return{getResponseCode:()=>c,getContentText:()=>b}});
   },fetch:(url,o)=>{
     if(url.includes('export?format=docx')) return {getBlob:()=>({setName:n=>({name:n})})};
     const eng=JSON.parse(o.payload).model; fetches.push(eng);
     const cp=require('child_process');
-    const out=cp.execFileSync('curl',['-sS','-m','120','-w','\n%{http_code}',url,'-H','Authorization: '+o.headers.Authorization,'-H','Content-Type: application/json','--data-binary','@-'],{input:o.payload}).toString();
+    const out=cp.execFileSync('curl',['-sS','-m','60','-w','\n%{http_code}',url,'-H','Authorization: '+o.headers.Authorization,'-H','Content-Type: application/json','--data-binary','@-'],{input:o.payload}).toString();
     const i=out.lastIndexOf('\n'); const bodyT=out.slice(0,i), codeN=Number(out.slice(i+1));
     return {getResponseCode:()=>codeN,getContentText:()=>bodyT};
     if(eng==='gemini' && fetches.filter(x=>x==='gemini').length===4) return {getResponseCode:()=>429,getContentText:()=>'rate'};
@@ -59,7 +61,7 @@ vm.createContext(g); vm.runInContext(code,g);
 g.setup();
 let r=vm.runInContext('submitRequest',g)({student_name:'أحمد',email:'s@x.com',university:'ج',college:'ك',department:'ق',governorate:'بغداد',supervisor:'م',title:'أثر التعلم الإلكتروني في التحصيل الدراسي لطلبة الجامعة',details:'أريد فصلاً نظرياً عن مفهوم التعلم الإلكتروني وأنواعه، وفصلاً عن أثره في التحصيل مع عرض دراسات سابقة.',language:'ar',pages:'25'});
 console.log('25 pages ->',r.ok,r.errors);
-r=g.submitRequest({student_name:'أحمد',email:'s@x.com',university:'ج',college:'ك',department:'ق',governorate:'بغداد',supervisor:'م',title:'أثر التعلم الإلكتروني في التحصيل الدراسي لطلبة الجامعة',details:'أريد فصلاً نظرياً عن مفهوم التعلم الإلكتروني وأنواعه، وفصلاً عن أثره في التحصيل مع عرض دراسات سابقة.',language:'ar',pages:'20'});
+r=g.submitRequest({student_name:'أحمد',email:'s@x.com',university:'ج',college:'ك',department:'ق',governorate:'بغداد',supervisor:'م',title:'أثر التعلم الإلكتروني في التحصيل الدراسي لطلبة الجامعة',details:'أريد فصلاً نظرياً عن مفهوم التعلم الإلكتروني وأنواعه، وفصلاً عن أثره في التحصيل مع عرض دراسات سابقة.',language:process.env.LANG_||'ar',pages:process.env.PAGES||'10'});
 console.log('submit',r);
 const html=mails[0].htmlBody; const link=html.match(/href="([^"]*a=approve[^"]*)"/)[1];
 const q=new URL(link).searchParams;

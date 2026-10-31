@@ -10,10 +10,16 @@ Object.defineProperty(window.google.script, "run", { get: function () {
   ["submitRequest", "trackRequest"].forEach(function (fn) {
     o[fn] = function () {
       var args = [].slice.call(arguments);
-      fetch(API_URL, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify({ fn: fn, args: args }) })
-        .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
-        .then(function (d) { if (d && d.serverError) throw new Error(d.serverError); ok(d); })
-        .catch(function (e) { fail(e); });
+      // مهلة حتى لا يبقى الزر معلّقاً إذا تأخر الخادم؛ والمتابعة (طلب قراءة فقط) تُعاد مرة تلقائياً
+      var tries = fn === "trackRequest" ? 2 : 1, wait = fn === "trackRequest" ? 30000 : 90000;
+      (function attempt() {
+        var ctl = window.AbortController ? new AbortController() : null;
+        var timer = ctl && setTimeout(function () { ctl.abort(); }, wait);
+        fetch(API_URL, { method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify({ fn: fn, args: args }), signal: ctl ? ctl.signal : undefined })
+          .then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
+          .then(function (d) { clearTimeout(timer); if (d && d.serverError) throw new Error(d.serverError); ok(d); })
+          .catch(function (e) { clearTimeout(timer); if (--tries > 0) setTimeout(attempt, 1500); else fail(e); });
+      })();
     };
   });
   return o;
@@ -57,7 +63,7 @@ f.addEventListener("submit",function(e){e.preventDefault();if(cur<steps.length-1
  google.script.run.withSuccessHandler(function(r){next.disabled=false;back.disabled=false;
   if(r.ok){try{localStorage.setItem(KEY+"-last",String(r.id))}catch(e){}$("wizard").hidden=true;$("done").hidden=false;$("oid").textContent="#"+r.id;$("oem").textContent=r.email;$("app").scrollIntoView({block:"start"});return}
   $("alert").innerHTML=r.errors.map(esc).join("<br>");$("alert").style.display="block";next.textContent="أرسل الطلب"})
- .withFailureHandler(function(){next.disabled=false;back.disabled=false;next.textContent="أرسل الطلب";$("alert").textContent="تعذر الإرسال. تحقق من اتصالك بالإنترنت وحاول مرة أخرى.";$("alert").style.display="block"})
+ .withFailureHandler(function(){next.disabled=false;back.disabled=false;next.textContent="أرسل الطلب";$("alert").textContent="تعذر الإرسال أو تأخر الرد. تحقق من اتصالك وحاول مرة أخرى، وإن وصلك إيميل تأكيد فطلبك مسجّل.";$("alert").style.display="block"})
  .submitRequest(d)});
 $("again").addEventListener("click",function(){$("title").value="";$("details").value="";$("cnt").textContent="0 / "+$("details").maxLength;$("done").hidden=true;$("wizard").hidden=false;show(2)});
 var STAGES=["استلمنا طلبك","التحقق من الدفع ومراجعة الطلب","كتابة البحث","أُرسل البحث إلى بريدك"];

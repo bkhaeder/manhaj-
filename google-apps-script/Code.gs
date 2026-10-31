@@ -23,7 +23,10 @@ const CONFIG = {
   GEMINI_API_KEY: '',        // مطلوب: https://aistudio.google.com/apikey (يشغّل نماذج Gemini وGemma كلها)
   // لكل حساب Google حصة مجانية مستقلة: يمكن وضع عدة مفاتيح من حسابات مختلفة مفصولة بفواصل فتتضاعف القدرة اليومية
   // لكل نموذج حصة مجانية يومية منفصلة. الأقوى أولاً، ثم Gemma (حصتها كبيرة)، ثم النماذج الخفيفة احتياطاً أخيراً
-  GEMINI_MODELS: ['gemini-flash-latest', 'gemini-3.7-flash', 'gemini-3.6-flash', 'gemini-3.5-flash', 'gemini-3-flash-preview'],
+  // مقيسة فعلياً: هذه الثلاثة تكتب الفصل في 7 إلى 20 ثانية
+  GEMINI_MODELS: ['gemini-3.6-flash', 'gemini-3-flash-preview', 'gemini-3.5-flash'],
+  // هذان يستغرقان 70 إلى 90 ثانية للفصل، وApps Script يقطع أي طلب بعد نحو 60 ثانية، فهما احتياط أخير فقط
+  SLOW_MODELS: ['gemini-3.7-flash', 'gemini-flash-latest'],
   GEMMA_MODELS: ['gemma-4-31b-it', 'gemma-4-26b-a4b-it'],
   LITE_MODELS: ['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', 'gemini-flash-lite-latest'],
   // محركات اختيارية من شركات أخرى: ضع مفتاح أي منها في «خصائص النص البرمجي» فيُضاف تلقائياً
@@ -239,6 +242,7 @@ function health_() {
   out.engines = engines_().map(function (e) { return e.name + (cache.get('cool_' + e.name) ? ' (انتظار)' : ''); });
   out.triggers = ScriptApp.getProjectTriggers().map(function (t) { return t.getHandlerFunction(); });
   out.mailQuota = mailQuota_();
+  try { out.recent = JSON.parse(props_().getProperty('RECENT') || '[]'); } catch (e) { out.recent = []; }
   out.mailRetry = retryList_();
   out.sender = sender_().from || 'account';
   return out;
@@ -384,6 +388,7 @@ function reviewAction(id, action, sig, reason) {
     const old = loadJob_(id);
     const job = old && old.v === JOB_V && !old.finished ? old : newJob_();
     job.attempts = 0; job.waits = 0; job.notBefore = 0;
+    job.approvedAt = Date.now();
     saveJob_(id, job);
     releaseJob_(id);
     props_().deleteProperty('WAIT_' + id);
@@ -440,6 +445,11 @@ function kick_() {
 function watchdog() {
   retryMails_();
   if (nextJobId_() !== null) processJobs();
+}
+
+/** يُستدعى من صفحة الموافقة بعد الضغط على «موافقة»: يبدأ الكتابة فوراً. */
+function startNow() {
+  processJobs();
 }
 
 /** يُستدعى من صفحة متابعة الطالب أثناء الكتابة: يكتب في تنفيذ ويب (لا يُحسب من وقت المشغّلات اليومي). */
@@ -561,7 +571,10 @@ function workOn_(id, start) {
   if (r.status === 'approved') setReq_(id, { status: 'generating' });
   try {
     while (Date.now() - start < STEP_BUDGET_MS) {
+      const name = steps_(job)[job.step], t0 = Date.now();
       const finished = runStep_(r, job, start);
+      job.t = job.t || {};
+      job.t[name] = (job.t[name] || 0) + Math.round((Date.now() - t0) / 1000);
       job.attempts = 0;
       job.lastError = '';
       saveJob_(id, job);
@@ -603,6 +616,14 @@ function finish_(r, job) {
     '<p>المحركات المستخدمة: ' + esc_(job.engines.join('، ')) + '</p><p><a href="' + job.docUrl + '">فتح البحث</a></p>');
   // نُبقي من المهمة روابط الملفات فقط (لصفحة المتابعة وإعادة الإرسال)
   saveJob_(id, { v: JOB_V, finished: true, files: job.files, mailed: job.mailed, engines: job.engines });
+  // سجل سرعة آخر البحوث (يظهر في ?api=health) لقياس الأداء الفعلي
+  try {
+    const p = props_(), recent = JSON.parse(p.getProperty('RECENT') || '[]');
+    recent.push({ id: id, pages: r.pages, at: new Date().toISOString(), seconds: job.t,
+                  total: job.approvedAt ? Math.round((Date.now() - job.approvedAt) / 1000) : null,
+                  engines: job.engines.length, mailed: !!job.mailed });
+    p.setProperty('RECENT', JSON.stringify(recent.slice(-8)));
+  } catch (e) { /* للتشخيص فقط */ }
   props_().deleteProperty('WAIT_' + id);
 }
 
@@ -853,6 +874,7 @@ function writeAll_(r, job, deadline) {
         if (job.engines.indexOf(x.e.name) < 0) job.engines.push(x.e.name);
       } catch (err) {
         errors[x.key] = x.e.name + ': ' + err.message;
+        console.warn('جزء ' + x.key + ' رُفض من ' + x.e.name + ': ' + err.message);
       }
     });
   }
@@ -930,7 +952,8 @@ function engines_() {
       { name: 'mistral', key: CONFIG.MISTRAL_API_KEY, model: CONFIG.MISTRAL_MODEL, url: 'https://api.mistral.ai/v1/chat/completions' },
       { name: 'openrouter', key: CONFIG.OPENROUTER_API_KEY, model: CONFIG.OPENROUTER_MODEL, url: 'https://openrouter.ai/api/v1/chat/completions' },
     ],
-    google(CONFIG.LITE_MODELS, { reasoning_effort: 'low' }, 8000, 2)
+    google(CONFIG.LITE_MODELS, { reasoning_effort: 'low' }, 8000, 2),
+    google(CONFIG.SLOW_MODELS, { reasoning_effort: 'low' }, 8000, 3)
   );
   return all.filter(function (e) { return e.key && e.model; }).map(function (e) { e.tier = e.tier || 1; return e; });
 }
@@ -944,7 +967,11 @@ function stripThoughts_(t) {
 /** المحركات التي ليست في فترة تهدئة (نفاد حصة مؤقت أو مفتاح خاطئ)، بترتيب القوة. */
 function available_() {
   const cache = CacheService.getScriptCache();
-  return engines_().filter(function (e) { return !cache.get('cool_' + e.name); });
+  // الأسرع أولاً (tier 1 ثم 2 ثم 3) مع الحفاظ على الترتيب داخل كل فئة
+  return engines_().filter(function (e) { return !cache.get('cool_' + e.name); })
+    .map(function (e, i) { return [e, i]; })
+    .sort(function (a, b) { return (a[0].tier - b[0].tier) || (a[1] - b[1]); })
+    .map(function (x) { return x[0]; });
 }
 
 function request_(e, system, prompt, opts) {
@@ -1481,7 +1508,9 @@ function reviewPage_(p) {
         '<div class="nav"><button id="b" class="ok" onclick="go()">تأكيد الموافقة وبدء كتابة البحث</button></div>')) +
     '</section><script>function go(){var b=document.getElementById("b"),m=document.getElementById("msg"),r=document.getElementById("reason");' +
     'b.disabled=true;b.textContent="جارٍ التنفيذ…";google.script.run.withSuccessHandler(function(t){m.style.display="block";m.style.background="transparent";' +
-    'm.style.color="var(--ok)";m.textContent=t;b.parentNode.style.display="none";if(r)r.parentNode.style.display="none";})' +
+    'm.style.color="var(--ok)";m.textContent=t;b.parentNode.style.display="none";if(r)r.parentNode.style.display="none";' +
+    // نبدأ الكتابة فوراً في تنفيذ مستقل بدل انتظار المشغّل الزمني (قد يتأخر دقيقة أو أكثر)
+    (a === 'approve' ? 'google.script.run.startNow();' : '') + '})' +
     '.withFailureHandler(function(e){b.disabled=false;m.style.display="block";m.textContent="حدث خطأ: "+e.message;})' +
     '.reviewAction(' + args + ',r?r.value:"");}</script>');
 }
